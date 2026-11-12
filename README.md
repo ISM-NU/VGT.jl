@@ -44,9 +44,12 @@ VGT products (FITS, one run directory each):
 - `psi_support_*.fits`: fraction of velocity channels contributing successful
   local fits per sky pixel
 
-All products sit on the input cube's pixel grid (same `CDELT`), but their
-resolution is coarser: the `dn` window and the `ker` Gaussian (sigma, input
-pixels), recorded in each header as `VGTDN`, `VGTKER`, `VGTKFWHM`. By default `psi` is
+By default all products sit on the input cube's pixel grid (same `CDELT`), but
+their resolution is coarser: the `dn` window and the `ker` Gaussian (sigma, input
+pixels), recorded in each header as `VGTDN`, `VGTKER`, `VGTKFWHM`. Set
+`output_bin = b` to write them on a coarser grid instead: the smoothed Q/U/I are
+averaged over `b` x `b` input pixels, psi and reliability are recomputed from those
+averages, and the header WCS is scaled to match (`VGTBIN = b`). By default `psi` is
 measured counter-clockwise from +FITS axis 1 of that grid (`PSIFRAME =
 'PIXEL'`), not east of north; set `angle_frame = "galactic"` (or `"icrs"`) to
 write it as an IAU position angle instead (`PSIFRAME = 'GALACTIC'`); on LMC-sized maps north rotates by tens of

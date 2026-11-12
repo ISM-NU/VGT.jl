@@ -37,6 +37,10 @@ struct VGTConfig
     # the frame VGT computes in) or an IAU position angle, east of north, in
     # :galactic or :icrs (converted per pixel through the WCS after smoothing).
     angle_frame::Symbol
+    # Output grid: 1 keeps the input grid; b > 1 averages the smoothed Q/U/I over
+    # b x b input-pixel blocks before psi and reliability are computed, and
+    # scales the celestial WCS to match (see `bin_products`).
+    output_bin::Int
 
     function VGTConfig(input_file::String, output_dir::String,
                        keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
@@ -50,7 +54,8 @@ struct VGTConfig
                        noise_sigma_multiplier::Float64,
                        rbar2_gate::Float64,
                        weight_file::String="",
-                       angle_frame::Symbol=:pixel)
+                       angle_frame::Symbol=:pixel,
+                       output_bin::Int=1)
         # Validate here so invalid science settings fail before a large FITS
         # cube run starts.
         _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
@@ -59,12 +64,13 @@ struct VGTConfig
                                 output_support_mode, gradient_mode, rbar2_gate)
         angle_frame in ANGLE_FRAMES ||
             throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
+        output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(output_bin)"))
         return new(input_file, output_dir, keep_intermediate_chunks, noise, dn, ker,
                    ny_chunks, min_valid, fitter_mode,
                    rbar2_weight, noise_mode,
                    noise_tile_size, zero_stokes_policy, output_support_mode,
                    gradient_mode, noise_sigma_multiplier,
-                   rbar2_gate, weight_file, angle_frame)
+                   rbar2_gate, weight_file, angle_frame, output_bin)
     end
 end
 
@@ -79,7 +85,8 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
                    noise_sigma_multiplier=1.0,
                    rbar2_gate=0.0,
                    weight_file="",
-                   angle_frame=:pixel)
+                   angle_frame=:pixel,
+                   output_bin=1)
     return VGTConfig(
         String(input_file),
         String(output_dir),
@@ -100,6 +107,7 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         Float64(rbar2_gate),
         String(weight_file),
         normalize_angle_frame(angle_frame),
+        Int(output_bin),
     )
 end
 
@@ -116,6 +124,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
                    rbar2_gate=0.0,
                    weight_file="",
                    angle_frame=:pixel,
+                   output_bin=1,
                    # Removed in 0.1.0; only the old default value is tolerated.
                    finalize_mask_mode=nothing,
                    histogram_edge_mode=nothing,
@@ -147,6 +156,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         Float64(rbar2_gate),
         String(weight_file),
         normalize_angle_frame(angle_frame),
+        Int(output_bin),
     )
 end
 
@@ -341,6 +351,8 @@ function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
 
     cfg.dn <= nx || throw(ArgumentError("dn=$(cfg.dn) is too large for nx=$nx (need nx ≥ $(cfg.dn))"))
     cfg.dn <= ny || throw(ArgumentError("dn=$(cfg.dn) is too large for ny=$ny (need ny ≥ $(cfg.dn))"))
+    cfg.output_bin <= min(nx, ny) ||
+        throw(ArgumentError("output_bin=$(cfg.output_bin) is larger than the map ($nx x $ny pixels)"))
 
     cpu_threads = max(1, Threads.nthreads())
     budget = memory_budget_bytes()
@@ -359,7 +371,7 @@ const VGT_CONFIG_TABLE_KEYS = Dict(
     "vgt" => Set([
         "dn", "ker", "min_valid", "fitter_mode",
         "zero_stokes_policy", "output_support_mode", "gradient_mode",
-        "rbar2_weight", "rbar2_gate", "angle_frame",
+        "rbar2_weight", "rbar2_gate", "angle_frame", "output_bin",
         "finalize_mask_mode", "histogram_edge_mode", "gradient_sample_mode",  # obsolete
     ]),
     "execution" => Set(["ny_chunks"]),
@@ -427,6 +439,7 @@ function load_config(path::AbstractString="config.toml")
         gradient_mode=_config_key_or(cfg, "gradient_mode", :central_checked),
         weight_file=String(_config_key_or(cfg, "weight_file", "")),
         angle_frame=_config_key_or(cfg, "angle_frame", :pixel),
+        output_bin=_config_key_or(cfg, "output_bin", 1),
         # Obsolete keys: the constructor accepts the old default with a
         # warning and rejects anything else.
         finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),

@@ -90,3 +90,76 @@ function headless_angle_difference(a, b)
     # same orientation.
     return mod.(a .- b .+ pi / 2, pi) .- pi / 2
 end
+
+"""
+    block_mean(a, b; valid=isfinite.(a)) -> Matrix{Float64}
+
+Mean of `a` over non-overlapping `b` x `b` blocks, using only entries where
+`valid` is true; a block with no valid entry is NaN. Partial blocks at the
+right and top edges are dropped, so output pixel (i, j) covers input pixels
+(i-1)b+1:ib by (j-1)b+1:jb and the binned WCS stays exact.
+"""
+function block_mean(a::AbstractMatrix, b::Int; valid::AbstractMatrix{Bool}=isfinite.(a))
+    b >= 1 || throw(ArgumentError("block size must be positive; got $b"))
+    nx, ny = size(a) .÷ b
+    out = Matrix{Float64}(undef, nx, ny)
+    @inbounds for j in 1:ny, i in 1:nx
+        total = 0.0
+        count = 0
+        for jj in (j - 1) * b + 1:j * b, ii in (i - 1) * b + 1:i * b
+            valid[ii, jj] || continue
+            total += a[ii, jj]
+            count += 1
+        end
+        out[i, j] = count == 0 ? NaN : total / count
+    end
+    return out
+end
+
+"""
+    bin_header(header, b) -> header
+
+Copy of a cube or map header for a grid of `b` x `b` blocks of axes 1 and 2:
+`NAXIS1/2`, `CRPIX1/2`, `CDELT1/2` and `CDi_j` (j = 1, 2) are rescaled so each
+binned pixel centre has the world coordinates of its block centre. `PC` and
+the reference value are unchanged. Returns `nothing` for `nothing`.
+"""
+bin_header(::Nothing, ::Int) = nothing
+function bin_header(header, b::Int)
+    b == 1 && return header
+    out = deepcopy(header)
+    for axis in 1:2
+        n = "NAXIS$axis"
+        haskey(out, n) && (out[n] = Int(out[n]) ÷ b)
+        # Input pixel x lies at binned coordinate (x - 0.5) / b + 0.5.
+        c = "CRPIX$axis"
+        haskey(out, c) && (out[c] = (Float64(out[c]) - 0.5) / b + 0.5)
+        d = "CDELT$axis"
+        haskey(out, d) && (out[d] = Float64(out[d]) * b)
+        for i in 1:2
+            cd = "CD$(i)_$(axis)"
+            haskey(out, cd) && (out[cd] = Float64(out[cd]) * b)
+        end
+    end
+    return out
+end
+
+"""
+    bin_products(finalized, fit_rbar2, fit_support, header, b)
+
+Products on the `b` x `b` binned grid: Q, U and I are averaged over the pixels
+where all three are valid, then psi and reliability are recomputed from the
+averages (never by averaging angles). The fit diagnostics are plain block
+means. Returns `(; psi, reliability, fit_rbar2, fit_support, header)`.
+"""
+function bin_products(finalized, fit_rbar2::AbstractMatrix, fit_support::AbstractMatrix, header, b::Int)
+    valid = isfinite.(finalized.q_smooth) .& isfinite.(finalized.u_smooth) .&
+            isfinite.(finalized.intensity_smooth)
+    q = block_mean(finalized.q_smooth, b; valid)
+    u = block_mean(finalized.u_smooth, b; valid)
+    intensity = block_mean(finalized.intensity_smooth, b; valid)
+    psi = 0.5 .* atan.(u, q) .+ (pi / 2)
+    return (; psi, reliability=compute_reliability(q, u, intensity),
+            fit_rbar2=block_mean(fit_rbar2, b), fit_support=block_mean(fit_support, b),
+            header=bin_header(header, b))
+end

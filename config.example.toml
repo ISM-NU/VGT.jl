@@ -44,6 +44,12 @@ min_valid = 100
 # (needs celestial axes). Use "galactic" to compare with Planck.
 angle_frame = "pixel"
 
+# Output grid. 1 keeps the input grid (pixels then oversample the resolution,
+# which is about dn pixels). b > 1 averages the smoothed Q/U/I over b x b input
+# pixels, recomputes psi from them and scales the header WCS (CDELT x b); partial
+# blocks at the right and top edges are dropped. Angles are never averaged.
+output_bin = 1
+
 [execution]
 # Number of y chunks: "auto" or a positive integer. Thread count is set when
 # launching Julia (--threads=N or JULIA_NUM_THREADS).

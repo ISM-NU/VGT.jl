@@ -6,6 +6,9 @@
 Base.@kwdef struct PipelineRun
     # In-memory result of one pipeline run before FITS files are written.
     config::VGTConfig
+    # psi, reliability, fit_rbar2, fit_support and header are on the output
+    # grid (binned when config.output_bin > 1); Q, U, I are the raw stitched
+    # accumulators on the input grid, before smoothing.
     psi::Matrix{Float64}
     reliability::Matrix{Float32}
     Q::Matrix{Float64}
@@ -74,10 +77,15 @@ function run_pipeline(cfg::VGTConfig)
         finalized = finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, resolved_cfg.ker,
                                           resolved_cfg.zero_stokes_policy,
                                           resolved_cfg.output_support_mode)
+        products = if resolved_cfg.output_bin == 1
+            (; finalized.psi, finalized.reliability, fit_maps.fit_rbar2, fit_maps.fit_support, header)
+        else
+            bin_products(finalized, fit_maps.fit_rbar2, fit_maps.fit_support, header, resolved_cfg.output_bin)
+        end
         # Gradients and Q/U smoothing are done in the pixel grid; a sky frame is
-        # applied only to the final angles, per pixel.
-        psi = resolved_cfg.angle_frame === :pixel ? finalized.psi :
-              pixel_to_position_angle(finalized.psi, header; frame=resolved_cfg.angle_frame)
+        # applied only to the final angles, per pixel of the output grid.
+        psi = resolved_cfg.angle_frame === :pixel ? products.psi :
+              pixel_to_position_angle(products.psi, products.header; frame=resolved_cfg.angle_frame)
         finished_at = Dates.now(Dates.UTC)
         performance = (;
             julia_threads=Threads.nthreads(),
@@ -89,13 +97,13 @@ function run_pipeline(cfg::VGTConfig)
         return PipelineRun(
             config=resolved_cfg,
             psi=psi,
-            reliability=Float32.(finalized.reliability),
+            reliability=Float32.(products.reliability),
             Q=q_stitched,
             U=u_stitched,
             I=intensity_stitched,
-            fit_rbar2=fit_maps.fit_rbar2,
-            fit_support=fit_maps.fit_support,
-            header=header,
+            fit_rbar2=products.fit_rbar2,
+            fit_support=products.fit_support,
+            header=products.header,
             diagnostics=diagnostics,
             performance=performance,
         )

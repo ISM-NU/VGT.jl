@@ -10,6 +10,7 @@ using Test
     include("vgt_edge_cases.jl")
     include("write_outputs.jl")
     include("sky_angles.jl")
+    include("output_bin.jl")
     include("regrid.jl")
     include("pipeline_fit_diagnostics.jl")
 end

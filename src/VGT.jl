@@ -48,7 +48,7 @@ export estimate_peak_chunk_bytes
 export PipelineRun
 export imfilter_gaussian
 export compute_stokes_intensity, compute_reliability
-export finalize_vgt_products, headless_angle_difference
+export finalize_vgt_products, headless_angle_difference, block_mean, bin_header, bin_products
 export write_fits, normalize_fits_extension, next_available_output_path, prefixed_input_filename
 export read_fits_header, read_fits_image
 export celestial_header, pixel_to_position_angle, vgt_product_header

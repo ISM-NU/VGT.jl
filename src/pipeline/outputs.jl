@@ -112,9 +112,9 @@ const _VGT_PRODUCT_CARDS = Dict(
 
 Header for a 2D VGT product: the input cube's celestial WCS (see
 `celestial_header`) plus the product's own unit, angle convention, and the VGT
-parameters that set its effective resolution. The grid (pixel scale) is the
-input grid; the resolution is coarser, set by the `dn` window and the `ker`
-Gaussian, both in input pixels.
+parameters that set its effective resolution. The grid is the input grid, or
+`output_bin` x `output_bin` blocks of it (`input_header` is then the binned
+header from `bin_products`); `dn` and `ker` are always in input pixels.
 """
 function vgt_product_header(input_header, cfg::VGTConfig, product::Symbol)
     haskey(_VGT_PRODUCT_CARDS, product) || throw(ArgumentError("Unknown VGT product $(product)"))
@@ -131,6 +131,7 @@ function vgt_product_header(input_header, cfg::VGTConfig, product::Symbol)
         ("VGTGRAD", String(cfg.gradient_mode), "gradient mode"),
         ("VGTNMODE", String(cfg.noise_mode), "noise model"),
         ("VGTNOISE", Float64(cfg.noise), "noise threshold input (K)"),
+        ("VGTBIN", cfg.output_bin, "output pixel = VGTBIN x VGTBIN input pixels"),
     ]
     if product === :psi
         if cfg.angle_frame === :pixel
@@ -174,6 +175,8 @@ function _config_metadata(cfg::VGTConfig)
         "zero_stokes_policy" => _metadata_value(cfg.zero_stokes_policy),
         "output_support_mode" => _metadata_value(cfg.output_support_mode),
         "gradient_mode" => _metadata_value(cfg.gradient_mode),
+        "angle_frame" => _metadata_value(cfg.angle_frame),
+        "output_bin" => cfg.output_bin,
     )
 end
 
