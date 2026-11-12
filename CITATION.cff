@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, cite it and the VGT method papers listed in docs/provenance.md."
+title: "VGT.jl: Velocity Gradient Technique for spectral-line FITS cubes"
+type: software
+version: "0.1.0"
+date-released: "2026-11-12"
+authors:
+  - family-names: Andreyev
+    given-names: Denis
+    affiliation: Nazarbayev University
+repository-code: "https://github.com/ISM-NU/VGT.jl"
+license: MIT
+keywords:
+  - velocity gradient technique
+  - interstellar magnetic fields
+  - H I
+  - Large Magellanic Cloud
+  - Julia

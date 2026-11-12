@@ -1,0 +1,522 @@
+# Core Velocity Gradient Technique (VGT) computation.
+#
+# The input cube is interpreted as intensity I(x, y, v): two sky axes and one
+# velocity/channel axis. For each channel, the code computes local spatial
+# gradients, estimates the dominant gradient orientation in a sliding window,
+# and accumulates those orientations into doubled-angle Stokes-like Q/U maps.
+
+function read_cube_metadata(path::AbstractString)
+    # Read only dimensions and header metadata. The full cube can be many GB, so
+    # the pipeline avoids loading it all into memory at this stage.
+    f = FITS(path)
+    try
+        dims = size(f[1])
+        header = read_header(f[1])
+        return dims[1], dims[2], dims[3], header
+    finally
+        close(f)
+    end
+end
+
+function _fits_card_value(value)
+    if value isa AbstractString
+        escaped = replace(value, "'" => "''")
+        return "'$(rpad(escaped, 8))'"
+    elseif value isa Bool
+        return value ? "T" : "F"
+    elseif value isa Integer
+        return string(value)
+    elseif value isa Real
+        return string(Float64(value))
+    end
+    return string(value)
+end
+
+function _fits_header_card(key::AbstractString, value)
+    length(key) <= 8 || throw(ArgumentError("FITS keyword is longer than 8 characters: $key"))
+    body = rpad(key, 8) * "= " * lpad(_fits_card_value(value), 20)
+    return rpad(body, 80)
+end
+
+function _wcs_header_string(header)
+    cards = String[]
+    for key in keys(header)
+        push!(cards, _fits_header_card(String(key), header[key]))
+    end
+    push!(cards, rpad("END", 80))
+    return join(cards)
+end
+
+function _linear_axis_coordinates(header, axis::Int, n::Int)
+    crpix = Float64(header["CRPIX$(axis)"])
+    crval = Float64(header["CRVAL$(axis)"])
+    cdelt = Float64(header["CDELT$(axis)"])
+    return [crval + (idx - crpix) * cdelt for idx in 1:n]
+end
+
+function _linear_getcoor(header, nx, ny, nv)
+    RA = zeros(nx)
+    DEC = zeros(ny)
+    vz = zeros(nv)
+    RA .= _linear_axis_coordinates(header, 1, nx)
+    DEC .= _linear_axis_coordinates(header, 2, ny)
+    vz .= _linear_axis_coordinates(header, 3, nv)
+    xi = Float64(header["CRVAL1"]) + (0 - Float64(header["CRPIX1"])) * Float64(header["CDELT1"])
+    xe = Float64(header["CRVAL1"]) + (nx - Float64(header["CRPIX1"])) * Float64(header["CDELT1"])
+    yi = Float64(header["CRVAL2"]) + (0 - Float64(header["CRPIX2"])) * Float64(header["CDELT2"])
+    ye = Float64(header["CRVAL2"]) + (ny - Float64(header["CRPIX2"])) * Float64(header["CDELT2"])
+    @debug "map extent" xi xe yi ye
+    return RA, DEC, vz
+end
+
+function _wcs_axis_coordinates(transform, axis::Int, n::Int, naxis::Int)
+    pixcoords = ones(Float64, naxis, n)
+    @inbounds for idx in 1:n
+        pixcoords[axis, idx] = idx
+    end
+    world = WCS.pix_to_world(transform, pixcoords)
+    return vec(world[axis, :])
+end
+
+function getcoor(header, nx, ny, nv)
+    # FITS WCS metadata converts pixel indices into sky/velocity coordinates.
+    # The pipeline can still run without this metadata; it is used for reporting
+    # and sanity checks, not for the VGT numerical result.
+    try
+        transforms = WCS.from_header(_wcs_header_string(header); ignore_rejected=true)
+        if isempty(transforms)
+            return _linear_getcoor(header, nx, ny, nv)
+        end
+
+        transform = transforms[1]
+        naxis = max(3, transform.naxis)
+        RA = _wcs_axis_coordinates(transform, 1, nx, naxis)
+        DEC = _wcs_axis_coordinates(transform, 2, ny, naxis)
+        vz = _wcs_axis_coordinates(transform, 3, nv, naxis)
+
+        corners = ones(Float64, naxis, 4)
+        corners[1:2, :] .= [0.0 nx 0.0 nx;
+                            0.0 0.0 ny ny]
+        world_corners = WCS.pix_to_world(transform, corners)
+        xi, xe = extrema(world_corners[1, :])
+        yi, ye = extrema(world_corners[2, :])
+        @debug "map extent" xi xe yi ye
+        return RA, DEC, vz
+    catch err
+        is_interrupt_exception(err) && rethrow()
+        @warn "WCS coordinate extraction failed; falling back to linear CRPIX/CRVAL/CDELT coordinates" exception=(err, catch_backtrace())
+        return _linear_getcoor(header, nx, ny, nv)
+    end
+end
+
+@inline function _accumulate_weighted_diagnostic!(num::AbstractMatrix{Float64},
+                                                 weight_sum::AbstractMatrix{Float64},
+                                                 i::Int, j::Int, value::Real, weight::Real)
+    if isfinite(value) && weight > 0.0
+        num[i, j] = muladd(Float64(weight), Float64(value), num[i, j])
+        weight_sum[i, j] += Float64(weight)
+    end
+    return nothing
+end
+
+@inline function _weighted_diagnostic_value(num::AbstractArray{Float64},
+                                            weight_sum::AbstractArray{Float64}, idx)
+    return weight_sum[idx] > 0.0 ? num[idx] / weight_sum[idx] : NaN
+end
+
+
+function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
+                               min_valid::Int=100,
+                               fitter_mode::Symbol=:axial_vonmises,
+                               collect_profile::Bool=false,
+                               rbar2_weight::Bool=false,
+                               rbar2_gate::Float64=0.0,
+                               gradient_mode::Symbol=:central_checked,
+                               weight_cube=nothing)
+    # This is the science kernel. It returns Q/U maps accumulated over channels.
+    # The final magnetic-field angle is computed later from these maps.
+    nx, ny, nv = size(cube)
+    iseven(dn) || throw(ArgumentError("dn must be even; got $dn"))
+    min_valid >= 1 || throw(ArgumentError("min_valid must be >= 1"))
+    min_valid <= dn * dn ||
+        throw(ArgumentError("min_valid=$min_valid exceeds the maximum window area dn^2=$(dn * dn)"))
+    dn <= nx || throw(ArgumentError("dn=$dn is too large for nx=$nx (need nx ≥ $dn)"))
+    dn <= ny || throw(ArgumentError("dn=$dn is too large for ny=$ny (need ny ≥ $dn)"))
+    gradient_mode in (:central_checked, :sobel_checked, :nan_edge_backward) ||
+        throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
+    0.0 <= rbar2_gate <= 1.0 ||
+        throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
+
+    # q_accum and u_accum store orientation information. We use cos(2*angle) and
+    # sin(2*angle) because field orientations are axial: angle and angle + pi
+    # describe the same headless direction.
+    q_accum = zeros(nx, ny)
+    u_accum = zeros(nx, ny)
+    grad_x = zeros(nx, ny)
+    grad_y = zeros(nx, ny)
+    half_dn = div(dn, 2)
+    # weight_cube (same size as cube) supplies the noise mask and the Stokes
+    # weights while the gradients come from cube, e.g. gradients of the VDA
+    # velocity-caustics cube (which can be negative) weighted by the observed
+    # intensity. Without it both come from cube.
+    if weight_cube !== nothing
+        size(weight_cube) == size(cube) ||
+            throw(ArgumentError("weight_cube size $(size(weight_cube)) must match cube size $(size(cube))"))
+    end
+    scalar_noise = noise isa Number
+    if !scalar_noise
+        size(noise) == size(cube) ||
+            throw(ArgumentError("noise array size $(size(noise)) must match cube size $(size(cube))"))
+    end
+
+    profile = Dict{Symbol, Any}(
+        :collect_profile => collect_profile,
+        :gradient_ns => Int[],
+        :window_ns => Int[],
+        :channels => Int[],
+        :fit_attempts => 0,
+        :fit_successes => 0,
+        :fit_failures => 0,
+        :fit_ns => 0,
+        :valid_windows => 0,
+        :fit_low_confidence_windows => 0,
+        :fit_rbar2 => nothing,
+        :fit_attempt_fraction => nothing,
+        :fit_support => nothing,
+    )
+
+    fit_rbar2_num = collect_profile ? zeros(nx, ny) : Matrix{Float64}(undef, 0, 0)
+    fit_rbar2_w = collect_profile ? zeros(nx, ny) : Matrix{Float64}(undef, 0, 0)
+    fit_attempt_count = collect_profile ? zeros(nx, ny) : Matrix{Float64}(undef, 0, 0)
+    fit_success_count = collect_profile ? zeros(nx, ny) : Matrix{Float64}(undef, 0, 0)
+
+    for channel in first_channel:last_channel
+        channel_image = @view cube[:, :, channel]
+        mask_image = weight_cube === nothing ? channel_image : @view weight_cube[:, :, channel]
+
+        # Compute backward spatial differences within one velocity channel.
+        # The production mode marks the first row/column invalid instead of
+        # wrapping around the image edge, which avoids inventing a gradient
+        # between unrelated sky pixels.
+        t_grad = collect_profile ? time_ns() : Int64(0)
+        @inbounds for j in 1:ny, i in 1:nx
+            if gradient_mode === :nan_edge_backward
+                grad_x[i, j] = i == 1 ? NaN : channel_image[i - 1, j] - channel_image[i, j]
+                grad_y[i, j] = j == 1 ? NaN : channel_image[i, j - 1] - channel_image[i, j]
+                # The backward compatibility path only masks the center pixel,
+                # preserving the historical production semantics.
+                threshold = scalar_noise ? noise : noise[i, j, channel]
+                if mask_image[i, j] < threshold
+                    grad_x[i, j] = NaN
+                    grad_y[i, j] = NaN
+                end
+            elseif gradient_mode === :central_checked
+                if i == 1 || i == nx || j == 1 || j == ny
+                    grad_x[i, j] = NaN
+                    grad_y[i, j] = NaN
+                    continue
+                end
+                center_ok = mask_image[i, j] >= (scalar_noise ? noise : noise[i, j, channel])
+                left_ok = mask_image[i - 1, j] >= (scalar_noise ? noise : noise[i - 1, j, channel])
+                right_ok = mask_image[i + 1, j] >= (scalar_noise ? noise : noise[i + 1, j, channel])
+                down_ok = mask_image[i, j - 1] >= (scalar_noise ? noise : noise[i, j - 1, channel])
+                up_ok = mask_image[i, j + 1] >= (scalar_noise ? noise : noise[i, j + 1, channel])
+                if center_ok && left_ok && right_ok && down_ok && up_ok
+                    grad_x[i, j] = (channel_image[i - 1, j] - channel_image[i + 1, j]) / 2
+                    grad_y[i, j] = (channel_image[i, j - 1] - channel_image[i, j + 1]) / 2
+                else
+                    grad_x[i, j] = NaN
+                    grad_y[i, j] = NaN
+                end
+            else # :sobel_checked
+                if i == 1 || i == nx || j == 1 || j == ny
+                    grad_x[i, j] = NaN
+                    grad_y[i, j] = NaN
+                    continue
+                end
+                valid_stencil = true
+                for jj in (j - 1):(j + 1), ii in (i - 1):(i + 1)
+                    threshold = scalar_noise ? noise : noise[ii, jj, channel]
+                    if mask_image[ii, jj] < threshold
+                        valid_stencil = false
+                        break
+                    end
+                end
+                if valid_stencil
+                    grad_x[i, j] = (
+                        channel_image[i - 1, j - 1] + 2 * channel_image[i - 1, j] + channel_image[i - 1, j + 1] -
+                        channel_image[i + 1, j - 1] - 2 * channel_image[i + 1, j] - channel_image[i + 1, j + 1]
+                    ) / 8
+                    grad_y[i, j] = (
+                        channel_image[i - 1, j - 1] + 2 * channel_image[i, j - 1] + channel_image[i + 1, j - 1] -
+                        channel_image[i - 1, j + 1] - 2 * channel_image[i, j + 1] - channel_image[i + 1, j + 1]
+                    ) / 8
+                else
+                    grad_x[i, j] = NaN
+                    grad_y[i, j] = NaN
+                end
+            end
+        end
+        if collect_profile
+            push!(profile[:channels], channel)
+            push!(profile[:gradient_ns], time_ns() - t_grad)
+        end
+
+        fit_attempts_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+        fit_successes_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+        fit_failures_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+        fit_ns_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+        valid_windows_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+        fit_low_confidence_tls = collect_profile ? zeros(Int, Threads.maxthreadid()) : Int[]
+
+        t_fit_stage = collect_profile ? time_ns() : Int64(0)
+        Threads.@threads for idx in 1:(nx * ny)
+            ii = mod1(idx, nx)
+            jj = cld(idx, nx)
+            if ii < half_dn || ii > nx - half_dn || jj < half_dn || jj > ny - half_dn
+                continue
+            end
+
+            tid = collect_profile ? Threads.threadid() : 1
+            is = ii - half_dn + 1
+            ie = ii + half_dn
+            js = jj - half_dn + 1
+            je = jj + half_dn
+            grad_x_window = @view grad_x[is:ie, js:je]
+            grad_y_window = @view grad_y[is:ie, js:je]
+
+            # A local window must contain enough valid gradient samples before
+            # fitting an orientation. This prevents isolated noisy pixels from
+            # producing a misleading field estimate.
+            valid = 0
+            for v in grad_x_window
+                if !isnan(v)
+                    valid += 1
+                end
+            end
+            valid >= min_valid || continue
+
+            if collect_profile
+                valid_windows_tls[tid] += 1
+                fit_attempts_tls[tid] += 1
+                fit_attempt_count[ii, jj] += 1
+            end
+
+            try
+                t_fit = collect_profile ? time_ns() : Int64(0)
+                result = fit_window_result(fitter_mode, grad_x_window, grad_y_window)
+                if collect_profile
+                    fit_ns_tls[tid] += time_ns() - t_fit
+                end
+
+                fit_angle = result.angle
+                intensity_weight = Float64(mask_image[ii, jj])
+                if collect_profile
+                    _accumulate_weighted_diagnostic!(fit_rbar2_num, fit_rbar2_w, ii, jj, result.rbar2, intensity_weight)
+                    if result.low_confidence
+                        fit_low_confidence_tls[tid] += 1
+                    end
+                end
+
+                passes_rbar2_gate = rbar2_gate <= 0.0 || (isfinite(result.rbar2) && result.rbar2 >= rbar2_gate)
+                if result.fit_ok && passes_rbar2_gate
+                    stokes_weight = (rbar2_weight && isfinite(result.rbar2)) ? intensity_weight * result.rbar2 : intensity_weight
+                    # Accumulate the fitted gradient orientation into Q/U.
+                    # The raw gradient is later rotated by 90 degrees to become
+                    # the magnetic-field orientation proxy.
+                    q_accum[ii, jj] = muladd(stokes_weight, cos(2.0 * fit_angle), q_accum[ii, jj])
+                    u_accum[ii, jj] = muladd(stokes_weight, sin(2.0 * fit_angle), u_accum[ii, jj])
+
+                    if collect_profile
+                        fit_successes_tls[tid] += 1
+                        fit_success_count[ii, jj] += 1
+                    end
+                elseif collect_profile
+                    fit_failures_tls[tid] += 1
+                end
+            catch err
+                is_interrupt_exception(err) && rethrow()
+                if collect_profile
+                    fit_failures_tls[tid] += 1
+                end
+            end
+        end
+
+        if collect_profile
+            profile[:fit_attempts] += sum(fit_attempts_tls)
+            profile[:fit_successes] += sum(fit_successes_tls)
+            profile[:fit_failures] += sum(fit_failures_tls)
+            profile[:valid_windows] += sum(valid_windows_tls)
+            profile[:fit_low_confidence_windows] += sum(fit_low_confidence_tls)
+            profile[:fit_ns] += sum(fit_ns_tls)
+            push!(profile[:window_ns], time_ns() - t_fit_stage)
+        end
+
+    end
+
+    if collect_profile
+        fit_rbar2_map = fill(NaN, nx, ny)
+        @inbounds for idx in eachindex(fit_rbar2_map)
+            fit_rbar2_map[idx] = _weighted_diagnostic_value(fit_rbar2_num, fit_rbar2_w, idx)
+        end
+        profile[:fit_rbar2] = fit_rbar2_map
+        channel_count = max(last_channel - first_channel + 1, 1)
+        profile[:fit_attempt_fraction] = fit_attempt_count ./ channel_count
+        profile[:fit_support] = fit_success_count ./ channel_count
+    end
+
+    return q_accum, u_accum, profile
+end
+
+function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
+                      min_valid::Int=100, fitter_mode::Symbol=:axial_vonmises,
+                      rbar2_weight::Bool=false,
+                      rbar2_gate::Float64=0.0,
+                      gradient_mode::Symbol=:central_checked,
+                      weight_cube=nothing)
+    # Public non-profiling VGT entry point used by tests and analysis scripts.
+    q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
+                                                fitter_mode=fitter_mode, collect_profile=false,
+                                                rbar2_weight=rbar2_weight,
+                                                rbar2_gate=rbar2_gate,
+                                                gradient_mode=gradient_mode,
+                                 weight_cube=weight_cube)
+    return q_accum, u_accum
+end
+
+function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
+                               min_valid::Int=100, fitter_mode::Symbol=:axial_vonmises,
+                               rbar2_weight::Bool=false,
+                               rbar2_gate::Float64=0.0,
+                               gradient_mode::Symbol=:central_checked,
+                               weight_cube=nothing)
+    # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
+    # counters that help evaluate fit quality across the sky.
+    return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
+                                 fitter_mode=fitter_mode, collect_profile=true,
+                                 rbar2_weight=rbar2_weight,
+                                 rbar2_gate=rbar2_gate,
+                                 gradient_mode=gradient_mode,
+                                 weight_cube=weight_cube)
+end
+
+function chunk_y_bounds(j::Int, ny::Int, ny_chunks::Int)
+    chunk_y = ceil(Int, ny / ny_chunks)
+    y_start = (j - 1) * chunk_y + 1
+    y_start > ny && return nothing
+    y_end = min(j * chunk_y, ny)
+    return y_start, y_end
+end
+
+Base.@kwdef struct VGTDiagnostics
+    # These counters are science diagnostics, not just logging. They tell us how
+    # much of the map was actually supported by successful local fits.
+    fit_attempts::Int = 0
+    fit_successes::Int = 0
+    fit_failures::Int = 0
+    valid_windows::Int = 0
+    fit_low_confidence_windows::Int = 0
+end
+
+function save_chunk_atomic(filename::String, q_accum, u_accum, intensity_accum, diagnostics::NamedTuple; fit_maps::NamedTuple=(;))
+    # Write through a temporary file and then move it into place. If a run is
+    # interrupted, this avoids leaving a half-written chunk with the final name.
+    tmp = string(filename, ".tmp.", getpid(), ".", Threads.threadid())
+    try
+        jldsave(tmp;
+            q=q_accum,
+            u=u_accum,
+            i=intensity_accum,
+            fit_attempts=diagnostics.fit_attempts,
+            fit_successes=diagnostics.fit_successes,
+            fit_failures=diagnostics.fit_failures,
+            valid_windows=diagnostics.valid_windows,
+            fit_low_confidence_windows=get(diagnostics, :fit_low_confidence_windows, 0),
+            fit_rbar2=get(fit_maps, :fit_rbar2, nothing),
+            fit_attempt_fraction=get(fit_maps, :fit_attempt_fraction, nothing),
+            fit_support=get(fit_maps, :fit_support, nothing),
+        )
+        mv(tmp, filename; force=true)
+    finally
+        if isfile(tmp)
+            rm(tmp; force=true)
+        end
+    end
+end
+
+function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=nothing)
+    # Large FITS cubes are processed in y chunks. Each chunk includes padding so
+    # sliding windows near chunk boundaries still see the same neighbors they
+    # would see in a full-cube run.
+    y_bounds = chunk_y_bounds(j, ny, cfg.ny_chunks)
+    y_bounds === nothing && return nothing
+    y_start, y_end = y_bounds
+    chunk_start_ns = time_ns()
+
+    f = FITS(cfg.input_file)
+    fw = isempty(cfg.weight_file) ? nothing : FITS(cfg.weight_file)
+    try
+        pad = chunk_padding_pixels(cfg)
+        py_start = max(1, y_start - pad)
+        py_end = min(ny, y_end + pad)
+        sub_cube = read(f[1], :, py_start:py_end, :)
+        sub_weight = fw === nothing ? nothing : read(fw[1], :, py_start:py_end, :)
+        resolved_noise_model = noise_model === nothing ? build_noise_model(
+            weight_source(cfg),
+            cfg.noise,
+            cfg.noise_mode;
+            tile_size=cfg.noise_tile_size,
+        ) : noise_model
+        noise = noise_for_chunk(
+            resolved_noise_model,
+            size(sub_cube, 1),
+            py_start:py_end,
+            nv,
+            multiplier=cfg.noise_sigma_multiplier,
+        )
+        q_padded, u_padded, profile = VGT_QU_mv_2d_profiled(
+            sub_cube, cfg.dn, 1, nv, noise;
+            min_valid=cfg.min_valid,
+            fitter_mode=cfg.fitter_mode,
+            rbar2_weight=cfg.rbar2_weight,
+            rbar2_gate=cfg.rbar2_gate,
+            gradient_mode=cfg.gradient_mode,
+            weight_cube=sub_weight,
+        )
+        diagnostics = (
+            fit_attempts=profile[:fit_attempts],
+            fit_successes=profile[:fit_successes],
+            fit_failures=profile[:fit_failures],
+            valid_windows=profile[:valid_windows],
+            fit_low_confidence_windows=profile[:fit_low_confidence_windows],
+        )
+        fit_maps = (
+            fit_rbar2=profile[:fit_rbar2],
+            fit_attempt_fraction=profile[:fit_attempt_fraction],
+            fit_support=profile[:fit_support],
+        )
+
+        trim_y_start = y_start - py_start + 1
+        trim_y_end = trim_y_start + (y_end - y_start)
+        # Remove padding before saving the chunk. Padding is only for correct
+        # window context; it must not duplicate pixels in the stitched output.
+        q_accum = q_padded[:, trim_y_start:trim_y_end]
+        u_accum = u_padded[:, trim_y_start:trim_y_end]
+        intensity_cube = sub_weight === nothing ? sub_cube : sub_weight
+        @views intensity_accum = sum(intensity_cube[:, trim_y_start:trim_y_end, :]; dims=3)[:, :, 1]
+        fit_maps_trimmed = (
+            fit_rbar2=fit_maps.fit_rbar2[:, trim_y_start:trim_y_end],
+            fit_attempt_fraction=fit_maps.fit_attempt_fraction[:, trim_y_start:trim_y_end],
+            fit_support=fit_maps.fit_support[:, trim_y_start:trim_y_end],
+        )
+
+        filename = joinpath(cfg.output_dir, "chunk_2d_$(j).jld2")
+        save_chunk_atomic(filename, q_accum, u_accum, intensity_accum, diagnostics; fit_maps=fit_maps_trimmed)
+        elapsed_s = round((time_ns() - chunk_start_ns) / 1e9; digits=2)
+        @info "Done chunk" chunk=j chunks=cfg.ny_chunks y_start=y_start y_end=y_end elapsed_s=elapsed_s
+        return filename
+    finally
+        close(f)
+        fw === nothing || close(fw)
+    end
+end

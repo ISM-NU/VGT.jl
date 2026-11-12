@@ -1,0 +1,85 @@
+# VGT run configuration.
+#
+# Parsed as TOML and loaded into the typed VGTConfig in src/config.jl. Modes are
+# strings here; the loader validates them. Copy to config.toml and edit.
+
+[input]
+# FITS cube path.
+input_file = "data/exp_raw/your_data.fits"
+
+# Leave empty to use a DrWatson parameter-named run directory under data/sims/vgt/.
+output_dir = ""
+
+# Keep per-chunk JLD2 intermediates after the final products are written.
+keep_intermediate_chunks = false
+
+# Optional cube (same size) that sets the noise mask, the per-channel Stokes
+# weights and the intensity map, while gradients come from input_file. Used for
+# VGT on VDA velocity caustics (scripts/vda_velocity_caustics.jl).
+# weight_file = ""
+
+[noise]
+# 1-sigma noise floor in data units. Estimate with scripts/analyze_inputs.jl
+# (use its "Suggested config: noise = ..." line).
+noise = 0.17
+
+# Multiplier applied to the noise floor to get the mask threshold. For a
+# conservative 3-sigma threshold, set noise to the 1-sigma estimate and this to 3.0.
+noise_sigma_multiplier = 1.0
+
+[vgt]
+# Window size in pixels (even). Larger dn averages more gradients per window
+# (smoother, less detail) and costs more RAM and compute per chunk.
+dn = 20
+
+# Gaussian smoothing sigma applied to the Q/U maps before computing the angle (pixels).
+ker = 4
+
+# Minimum valid above-threshold gradients required in a window before fitting.
+min_valid = 100
+
+[execution]
+# Number of y chunks: "auto" or a positive integer. Thread count is set when
+# launching Julia (--threads=N or JULIA_NUM_THREADS).
+ny_chunks = "auto"
+
+# ---------------------------------------------------------------------------
+# Advanced. Leave at the defaults unless validation on your cube supports a
+# change; every value below except the defaults changes the science.
+# Add these keys to the tables named in the comments.
+# ---------------------------------------------------------------------------
+
+# [noise]
+# Threshold model:
+#   "scalar"    the single noise value above (default)
+#   "channel"   per-channel noise estimated inside each padded chunk
+#   "spatial"   coarse spatial-tile noise estimated inside each chunk
+#   "separable" spatial and channel estimates combined
+#   "auto"      scalar/channel/spatial/separable chosen from sampled spread
+# noise_mode = "scalar"
+# noise_tile_size = 128   # tile size for "spatial", "separable" and "auto"
+
+# [vgt]
+# Window fitter. "axial_vonmises" (unbinned axial circular estimator) is the only one.
+# fitter_mode = "axial_vonmises"
+
+# Gradient stencil:
+#   "central_checked"    default; central differences, all stencil pixels above threshold
+#   "sobel_checked"      Sobel stencil
+#   "nan_edge_backward"  backward differences, first row/column invalid
+# gradient_mode = "central_checked"
+
+# Zero Q/U handling before smoothing:
+#   "nan_before_smoothing"        default; zero Q/U is missing support
+#   "keep_zero_before_smoothing"  keep zero Q/U through smoothing
+# zero_stokes_policy = "nan_before_smoothing"
+
+# Output support:
+#   "smoothed_stokes_support"  default; includes the Gaussian support halo
+#   "direct_fit_support"       blank pixels without a direct fitted window
+# output_support_mode = "smoothed_stokes_support"
+
+# Per-channel coherence weighting / gating. Keep disabled unless component-matched
+# validation supports enabling them.
+# rbar2_weight = false
+# rbar2_gate = 0.0   # drop window fits with doubled-angle coherence below this; 0 disables
