@@ -38,6 +38,12 @@ ker = 4
 # Minimum valid above-threshold gradients required in a window before fitting.
 min_valid = 100
 
+# Frame of the written psi map. "pixel": counter-clockwise from the image x-axis
+# (FITS axis 1), the frame VGT computes in. "galactic" or "icrs": IAU position
+# angle, east of north in that frame, converted per pixel through the cube's WCS
+# (needs celestial axes). Use "galactic" to compare with Planck.
+angle_frame = "pixel"
+
 [execution]
 # Number of y chunks: "auto" or a positive integer. Thread count is set when
 # launching Julia (--threads=N or JULIA_NUM_THREADS).

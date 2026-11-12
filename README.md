@@ -46,9 +46,10 @@ VGT products (FITS, one run directory each):
 
 All products sit on the input cube's pixel grid (same `CDELT`), but their
 resolution is coarser: the `dn` window and the `ker` Gaussian (sigma, input
-pixels), recorded in each header as `VGTDN`, `VGTKER`, `VGTKFWHM`. `psi` is
+pixels), recorded in each header as `VGTDN`, `VGTKER`, `VGTKFWHM`. By default `psi` is
 measured counter-clockwise from +FITS axis 1 of that grid (`PSIFRAME =
-'PIXEL'`), not east of north; on LMC-sized maps north rotates by tens of
+'PIXEL'`), not east of north; set `angle_frame = "galactic"` (or `"icrs"`) to
+write it as an IAU position angle instead (`PSIFRAME = 'GALACTIC'`); on LMC-sized maps north rotates by tens of
 degrees across the grid. Use `pixel_to_position_angle` (or
 `scripts/foreground_stokes_from_vgt.jl --frame galactic` in ISM-NU/LMC-foreground) before comparing with
 Planck or starlight, and regrid via Q/U (cos 2psi, sin 2psi), never psi itself.

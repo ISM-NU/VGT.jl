@@ -34,26 +34,7 @@ function resolved_output_dir(cfg::VGTConfig; label::AbstractString=DEFAULT_RUN_F
 end
 
 function _with_output_dir(cfg::VGTConfig, output_dir::AbstractString)
-    return VGTConfig(
-        cfg.input_file,
-        String(output_dir),
-        cfg.keep_intermediate_chunks,
-        cfg.noise,
-        cfg.dn,
-        cfg.ker,
-        cfg.ny_chunks,
-        cfg.min_valid,
-        cfg.fitter_mode,
-        cfg.rbar2_weight,
-        cfg.noise_mode,
-        cfg.noise_tile_size,
-        cfg.zero_stokes_policy,
-        cfg.output_support_mode,
-        cfg.gradient_mode,
-        cfg.noise_sigma_multiplier,
-        cfg.rbar2_gate,
-        cfg.weight_file,
-    )
+    return config_with(cfg; output_dir=String(output_dir))
 end
 
 function run_pipeline(cfg::VGTConfig)
@@ -71,6 +52,8 @@ function run_pipeline(cfg::VGTConfig)
         isfile(cfg.input_file) || error("$(cfg.input_file) not found. Current directory: $(pwd())")
         nx, ny, nv, header = read_cube_metadata(cfg.input_file)
         resolved_cfg = resolve_execution_config(cfg, nx, ny, nv)
+        # Fail before the expensive part if a sky frame is asked for a cube without one.
+        cfg.angle_frame === :pixel || (_celestial_wcs(header); _map_frame(header))
         @info "Resolved execution settings" julia_threads=Threads.nthreads() chunks=resolved_cfg.ny_chunks memory_budget_gb=round(memory_budget_bytes() / 1024^3; digits=1)
         isempty(cfg.weight_file) || (read_cube_metadata(cfg.weight_file)[1:3] == (nx, ny, nv) ||
             error("weight_file $(cfg.weight_file) does not match the size of $(cfg.input_file)"))
@@ -91,6 +74,10 @@ function run_pipeline(cfg::VGTConfig)
         finalized = finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, resolved_cfg.ker,
                                           resolved_cfg.zero_stokes_policy,
                                           resolved_cfg.output_support_mode)
+        # Gradients and Q/U smoothing are done in the pixel grid; a sky frame is
+        # applied only to the final angles, per pixel.
+        psi = resolved_cfg.angle_frame === :pixel ? finalized.psi :
+              pixel_to_position_angle(finalized.psi, header; frame=resolved_cfg.angle_frame)
         finished_at = Dates.now(Dates.UTC)
         performance = (;
             julia_threads=Threads.nthreads(),
@@ -101,7 +88,7 @@ function run_pipeline(cfg::VGTConfig)
         )
         return PipelineRun(
             config=resolved_cfg,
-            psi=finalized.psi,
+            psi=psi,
             reliability=Float32.(finalized.reliability),
             Q=q_stitched,
             U=u_stitched,

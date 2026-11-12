@@ -45,6 +45,8 @@ function run_parameters(cfg::VGTConfig; label::AbstractString=DEFAULT_RUN_FAMILY
         "output_support" => _stringify_path_param(cfg.output_support_mode),
         "gradient" => _stringify_path_param(cfg.gradient_mode),
     )
+    # Only a sky frame enters the run name, so pixel-frame run directories keep their names.
+    cfg.angle_frame === :pixel || (params["angle_frame"] = String(cfg.angle_frame))
     return params
 end
 

@@ -144,3 +144,58 @@ end
         @test read_fits_header(outputs.psi_path)["PSIFRAME"] == "PIXEL"
     end
 end
+
+@testset "angle_frame writes psi as an IAU position angle in the chosen frame" begin
+    @test VGTConfig(input_file="c.fits", noise=1.0, dn=4, ker=1, min_valid=4, angle_frame="galactic").angle_frame === :galactic
+    @test VGTConfig(input_file="c.fits", noise=1.0, dn=4, ker=1, min_valid=4).angle_frame === :pixel
+    @test_throws ArgumentError VGTConfig(input_file="c.fits", noise=1.0, dn=4, ker=1, min_valid=4, angle_frame=:north)
+
+    mktempdir() do dir
+        cube = zeros(Float32, 16, 14, 6)
+        @inbounds for k in 1:6, j in 1:14, i in 1:16
+            cube[i, j, k] = 3f0 + 0.2f0 * i + 0.1f0 * j + 0.05f0 * k
+        end
+        keys = ["CTYPE1", "CTYPE2", "CTYPE3", "CRVAL1", "CRVAL2", "CRVAL3", "CRPIX1", "CRPIX2", "CRPIX3",
+                "CDELT1", "CDELT2", "CDELT3"]
+        values = Any["RA---TAN", "DEC--TAN", "VRAD", 80.0, -69.0, 0.0, 8.0, 7.0, 1.0, -0.5, 0.5, 1000.0]
+        sky = joinpath(dir, "sky.fits")
+        FITS(sky, "w") do f
+            write(f, cube; header=FITSHeader(keys, values, fill("", length(keys))))
+        end
+        base = (; input_file=sky, keep_intermediate_chunks=false, noise=1e-6, dn=4, ker=1,
+                ny_chunks=1, min_valid=4, noise_mode=:auto)
+        pix = run_pipeline(VGTConfig(; base..., output_dir=joinpath(dir, "pix")))
+        gal = run_pipeline(VGTConfig(; base..., output_dir=joinpath(dir, "gal"), angle_frame=:galactic))
+        expected = pixel_to_position_angle(pix.psi, read_fits_header(sky); frame=:galactic)
+        @test count(isfinite, gal.psi) > 0
+        @test isequal(gal.psi, expected)
+        @test isequal(gal.reliability, pix.reliability)
+        @test vgt_product_header(gal.header, gal.config, :psi)["PSIFRAME"] == "GALACTIC"
+        @test run_parameters(gal.config)["angle_frame"] == "galactic"
+        @test !haskey(run_parameters(pix.config), "angle_frame")
+
+        flat = joinpath(dir, "flat.fits")
+        FITS(flat, "w") do f
+            write(f, cube)
+        end
+        @test_throws Exception run_pipeline(VGTConfig(; base..., input_file=flat,
+                                                      output_dir=joinpath(dir, "flat"), angle_frame=:icrs))
+
+        toml = joinpath(dir, "cfg.toml")
+        write(toml, """
+            [input]
+            input_file = "$(sky)"
+            output_dir = "$(joinpath(dir, "toml"))"
+            [noise]
+            noise = 1e-6
+            [vgt]
+            dn = 4
+            ker = 1
+            min_valid = 4
+            angle_frame = "icrs"
+            [execution]
+            ny_chunks = 1
+            """)
+        @test load_config(toml).angle_frame === :icrs
+    end
+end

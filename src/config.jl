@@ -3,6 +3,14 @@
 # Most fields are not generic software options; they encode scientific choices
 # such as window size, noise model, fitter mode, and masking policy.
 
+const ANGLE_FRAMES = (:pixel, :galactic, :icrs)
+
+function normalize_angle_frame(value)
+    frame = _symbol_config_value(value)
+    frame in ANGLE_FRAMES && return frame
+    throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(value)"))
+end
+
 struct VGTConfig
     input_file::String
     output_dir::String
@@ -25,6 +33,10 @@ struct VGTConfig
     # gradients come from input_file (VDA: gradients of the velocity caustics,
     # weighted by the observed intensity). Empty = input_file.
     weight_file::String
+    # Frame of the written psi map: :pixel (counter-clockwise from +FITS axis 1,
+    # the frame VGT computes in) or an IAU position angle, east of north, in
+    # :galactic or :icrs (converted per pixel through the WCS after smoothing).
+    angle_frame::Symbol
 
     function VGTConfig(input_file::String, output_dir::String,
                        keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
@@ -37,19 +49,22 @@ struct VGTConfig
                        gradient_mode::Symbol,
                        noise_sigma_multiplier::Float64,
                        rbar2_gate::Float64,
-                       weight_file::String="")
+                       weight_file::String="",
+                       angle_frame::Symbol=:pixel)
         # Validate here so invalid science settings fail before a large FITS
         # cube run starts.
         _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
                                 noise_mode, noise_tile_size,
                                 noise_sigma_multiplier, zero_stokes_policy,
                                 output_support_mode, gradient_mode, rbar2_gate)
+        angle_frame in ANGLE_FRAMES ||
+            throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
         return new(input_file, output_dir, keep_intermediate_chunks, noise, dn, ker,
                    ny_chunks, min_valid, fitter_mode,
                    rbar2_weight, noise_mode,
                    noise_tile_size, zero_stokes_policy, output_support_mode,
                    gradient_mode, noise_sigma_multiplier,
-                   rbar2_gate, weight_file)
+                   rbar2_gate, weight_file, angle_frame)
     end
 end
 
@@ -63,7 +78,8 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
                    gradient_mode=:central_checked,
                    noise_sigma_multiplier=1.0,
                    rbar2_gate=0.0,
-                   weight_file="")
+                   weight_file="",
+                   angle_frame=:pixel)
     return VGTConfig(
         String(input_file),
         String(output_dir),
@@ -83,6 +99,7 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         Float64(noise_sigma_multiplier),
         Float64(rbar2_gate),
         String(weight_file),
+        normalize_angle_frame(angle_frame),
     )
 end
 
@@ -98,6 +115,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
                    noise_sigma_multiplier=1.0,
                    rbar2_gate=0.0,
                    weight_file="",
+                   angle_frame=:pixel,
                    # Removed in 0.1.0; only the old default value is tolerated.
                    finalize_mask_mode=nothing,
                    histogram_edge_mode=nothing,
@@ -128,7 +146,15 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         Float64(noise_sigma_multiplier),
         Float64(rbar2_gate),
         String(weight_file),
+        normalize_angle_frame(angle_frame),
     )
+end
+
+# Copy of `cfg` with some fields replaced. Copies every field by name, so a new
+# field cannot be dropped by a hand-written field list.
+function config_with(cfg::VGTConfig; changes...)
+    values = (haskey(changes, f) ? changes[f] : getfield(cfg, f) for f in fieldnames(VGTConfig))
+    return VGTConfig(values...)
 end
 
 function _symbol_config_value(value)
@@ -321,26 +347,7 @@ function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
     auto_execution = choose_auto_execution(cfg, nx, ny, nv, cpu_threads, budget)
     ny_chunks = auto_execution.ny_chunks
 
-    return VGTConfig(
-        cfg.input_file,
-        cfg.output_dir,
-        cfg.keep_intermediate_chunks,
-        cfg.noise,
-        cfg.dn,
-        cfg.ker,
-        ny_chunks,
-        cfg.min_valid,
-        cfg.fitter_mode,
-        cfg.rbar2_weight,
-        cfg.noise_mode,
-        cfg.noise_tile_size,
-        cfg.zero_stokes_policy,
-        cfg.output_support_mode,
-        cfg.gradient_mode,
-        cfg.noise_sigma_multiplier,
-        cfg.rbar2_gate,
-        cfg.weight_file,
-    )
+    return config_with(cfg; ny_chunks=ny_chunks)
 end
 
 const VGT_CONFIG_TABLE_KEYS = Dict(
@@ -352,7 +359,7 @@ const VGT_CONFIG_TABLE_KEYS = Dict(
     "vgt" => Set([
         "dn", "ker", "min_valid", "fitter_mode",
         "zero_stokes_policy", "output_support_mode", "gradient_mode",
-        "rbar2_weight", "rbar2_gate",
+        "rbar2_weight", "rbar2_gate", "angle_frame",
         "finalize_mask_mode", "histogram_edge_mode", "gradient_sample_mode",  # obsolete
     ]),
     "execution" => Set(["ny_chunks"]),
@@ -419,6 +426,7 @@ function load_config(path::AbstractString="config.toml")
         output_support_mode=_config_key_or(cfg, "output_support_mode", :smoothed_stokes_support),
         gradient_mode=_config_key_or(cfg, "gradient_mode", :central_checked),
         weight_file=String(_config_key_or(cfg, "weight_file", "")),
+        angle_frame=_config_key_or(cfg, "angle_frame", :pixel),
         # Obsolete keys: the constructor accepts the old default with a
         # warning and rejects anything else.
         finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),

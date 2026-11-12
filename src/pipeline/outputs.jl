@@ -75,6 +75,7 @@ function run_metadata(run::PipelineRun, outputs)
             "stem" => splitext(basename(cfg.input_file))[1],
             "size_bytes" => isfile(cfg.input_file) ? filesize(cfg.input_file) : -1,
             "weight_file" => cfg.weight_file,
+            "angle_frame" => String(cfg.angle_frame),
         ),
         "run_parameters" => run_parameters(cfg),
         "config" => _config_metadata(cfg),
@@ -132,7 +133,11 @@ function vgt_product_header(input_header, cfg::VGTConfig, product::Symbol)
         ("VGTNOISE", Float64(cfg.noise), "noise threshold input (K)"),
     ]
     if product === :psi
-        push!(cards, ("PSIFRAME", "PIXEL", "CCW from +axis 1 in pixel grid; not east of N"))
+        if cfg.angle_frame === :pixel
+            push!(cards, ("PSIFRAME", "PIXEL", "CCW from +axis 1 in pixel grid; not east of N"))
+        else
+            push!(cards, ("PSIFRAME", uppercase(String(cfg.angle_frame)), "IAU position angle, east of north in this frame"))
+        end
         push!(cards, ("PSIANGLE", "BFIELD", "gradient angle + 90 deg (B-field, not pol.)"))
     end
     for (key, value, comment) in cards
