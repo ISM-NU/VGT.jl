@@ -9,7 +9,7 @@
 #SBATCH --error=validation_output/vgt_irgetas_logs/%x-%j.err
 #SBATCH --mail-type=END,FAIL
 
-# Run the VGT pipeline on one cube. Pass the config with
+# Run the VGT pipeline on one cube (or several, see below). Pass the config with
 #   sbatch --export=ALL,VGT_REPO=$PWD,VGT_CONFIG=<config.toml> hpc/irgetas/vgt.slurm
 # Threads come from --cpus-per-task; the chunk memory budget follows --mem
 # (src/config.jl memory_budget_bytes). Give each run its own output_dir:
@@ -35,6 +35,8 @@ command -v julia >/dev/null || {
     exit 2
 }
 
-srun --ntasks=1 julia --project=. --threads="$threads" main.jl "$VGT_CONFIG"
+# VGT_CONFIG may list several configs separated by spaces; they run in one Julia process.
+read -ra configs <<< "$VGT_CONFIG"
+srun --ntasks=1 julia --project=. --threads="$threads" main.jl "${configs[@]}"
 
 date --iso-8601=seconds

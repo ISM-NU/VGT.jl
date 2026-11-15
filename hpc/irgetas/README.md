@@ -5,7 +5,7 @@ copy files and submit jobs.
 
 | Script | What it does |
 |---|---|
-| `vgt.slurm` | Run the VGT pipeline (`main.jl`) on one config with `--cpus-per-task` Julia threads |
+| `vgt.slurm` | Run the VGT pipeline (`main.jl`) on one config, or several space-separated in `VGT_CONFIG` (one Julia process), with `--cpus-per-task` Julia threads |
 
 ## Access
 

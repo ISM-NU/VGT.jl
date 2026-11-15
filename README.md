@@ -84,7 +84,7 @@ Group members usually work from the LMC workspace (the private ISM-NU/LMC-worksp
 
 ## Repository Files
 
-- `main.jl`: VGT entry point, `julia main.jl [config.toml]`
+- `main.jl`: VGT entry point, `julia main.jl [config.toml ...]`
 - `examples/quickstart.jl`: synthetic end-to-end example (figure in `docs/images/`)
 - `config.example.toml`: VGT config template
 - `src/`: package code
@@ -157,7 +157,13 @@ Run the pipeline from the repository root:
 ```bash
 julia main.jl            # uses config.toml
 julia main.jl other.toml # any other config
+julia main.jl a.toml b.toml c.toml # several runs in one Julia process
 ```
+
+Several configs run one after another in one process, so Julia starts and
+compiles once; for short runs (a velocity window takes seconds) start-up is
+most of the wall time. All configs are checked before the first run, and a run
+that fails does not stop the others (the exit code is then 1).
 
 With the checked-in `.envrc`, this uses the local project environment and runs
 with 16 Julia threads by default.
