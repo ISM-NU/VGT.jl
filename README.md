@@ -54,7 +54,7 @@ measured counter-clockwise from +FITS axis 1 of that grid (`PSIFRAME =
 'PIXEL'`), not east of north; set `angle_frame = "galactic"` (or `"icrs"`) to
 write it as an IAU position angle instead (`PSIFRAME = 'GALACTIC'`); on LMC-sized maps north rotates by tens of
 degrees across the grid. Use `pixel_to_position_angle` (or
-`scripts/foreground_stokes_from_vgt.jl --frame galactic` in ISM-NU/LMC-foreground) before comparing with
+`scripts/foreground_stokes_from_vgt.jl --frame galactic` in the group's foreground repository) before comparing with
 Planck or starlight, and regrid via Q/U (cos 2psi, sin 2psi), never psi itself.
 
 For a beginner-oriented explanation of the workflow and physics, see
@@ -64,7 +64,7 @@ For a beginner-oriented explanation of the workflow and physics, see
 
 ## Requirements
 
-Usually this repository sits in the LMC workspace folder (`~/Projects/LMC`), whose `setup.sh` clones all related repositories next to each other and links the shared data; its AGENTS.md has the rules that span repositories.
+Group members usually work from the LMC workspace (the private ISM-NU/LMC-workspace repository), whose `setup.sh` clones the related repositories side by side and links the shared `lmc-data` folder.
 
 - Julia 1.10 or newer
 - FITS cubes under `data/exp_raw/` (not in git; shared through the team Google
@@ -96,16 +96,16 @@ Usually this repository sits in the LMC workspace folder (`~/Projects/LMC`), who
 
 ## Related repositories
 
-All in the ISM-NU organisation, private:
+All in the ISM-NU organisation:
 
-- `ISM-NU/ROHSA-LMC`: ROHSA Gaussian decomposition and velocity-layer cubes.
-- `ISM-NU/LMC-foreground`: Milky Way foreground, Planck 353 GHz and starlight
+- [ROHSA-LMC](https://github.com/ISM-NU/ROHSA-LMC) (public): ROHSA Gaussian decomposition and velocity-layer cubes.
+- `ISM-NU/LMC-foreground` (private until publication): Milky Way foreground, Planck 353 GHz and starlight
   comparisons with VGT maps.
-- `ISM-NU/LMC-cold-gas`: cold H I experiments and ROHSA run configs.
-- `ISM-NU/LMC-shells`: optical supergiant-shell analysis.
+- `ISM-NU/LMC-cold-gas` (private until publication): cold H I experiments and ROHSA run configs.
+- [LMC-shells](https://github.com/ISM-NU/LMC-shells) (public): optical supergiant-shell analysis.
 
 The experiment repositories pin this one as a git submodule under `deps/`. The
-shared data folder is `~/Projects/LMC/lmc-data`; in each repository `data/` is a
+shared data folder is `lmc-data` next to the repositories; in each repository `data/` is a
 symlink to it, created from the repository root with
 
 ```bash
@@ -251,7 +251,7 @@ For the complete script catalog, see [`scripts/README.md`](./scripts/README.md).
 
 Durable validation conclusions belong in `docs/`. Local generated runs and
 reports belong under ignored `data/sims/...` directories by default. Comparisons
-with external tracers (starlight, Planck) are in ISM-NU/LMC-foreground; they are
+with external tracers (starlight, Planck) are in the group's foreground repository (private until publication); they are
 comparison tracers, not ground truth.
 
 Validation, profiling, and comparison scripts that compute scalar metrics also
