@@ -57,6 +57,12 @@ degrees across the grid. Use `pixel_to_position_angle` (or
 `scripts/foreground_stokes_from_vgt.jl --frame galactic` in the group's foreground repository) before comparing with
 Planck or starlight, and regrid via Q/U (cos 2psi, sin 2psi), never psi itself.
 
+To use one velocity range of the cube, set `velocity_range_kms = [lo, hi]` in
+`[input]`: only channels whose centres lie inside it are read, and the products
+(and estimated noise) are the same as for the cube cut to those channels, so no
+cut cube needs to be written. The window is recorded as `VGTVLO`/`VGTVHI` in the
+headers and as `channels_used` in `run_metadata.toml`.
+
 For a beginner-oriented explanation of the workflow and physics, see
 [`docs/EXPLAINER.md`](./docs/EXPLAINER.md). For the full documentation map, see
 [`docs/README.md`](./docs/README.md); for dependency guidance,

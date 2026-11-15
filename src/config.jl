@@ -41,6 +41,9 @@ struct VGTConfig
     # b x b input-pixel blocks before psi and reliability are computed, and
     # scales the celestial WCS to match (see `bin_products`).
     output_bin::Int
+    # Velocity window [lo, hi] in km/s: only channels whose centres lie inside it
+    # (inclusive) are used, as if the cube were cut to them. Empty = all channels.
+    velocity_range_kms::Vector{Float64}
 
     function VGTConfig(input_file::String, output_dir::String,
                        keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
@@ -55,7 +58,8 @@ struct VGTConfig
                        rbar2_gate::Float64,
                        weight_file::String="",
                        angle_frame::Symbol=:pixel,
-                       output_bin::Int=1)
+                       output_bin::Int=1,
+                       velocity_range_kms::Vector{Float64}=Float64[])
         # Validate here so invalid science settings fail before a large FITS
         # cube run starts.
         _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
@@ -65,12 +69,15 @@ struct VGTConfig
         angle_frame in ANGLE_FRAMES ||
             throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
         output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(output_bin)"))
+        isempty(velocity_range_kms) || (length(velocity_range_kms) == 2 && all(isfinite, velocity_range_kms) &&
+                                        velocity_range_kms[1] < velocity_range_kms[2]) ||
+            throw(ArgumentError("velocity_range_kms must be empty or [lo, hi] with lo < hi; got $(velocity_range_kms)"))
         return new(input_file, output_dir, keep_intermediate_chunks, noise, dn, ker,
                    ny_chunks, min_valid, fitter_mode,
                    rbar2_weight, noise_mode,
                    noise_tile_size, zero_stokes_policy, output_support_mode,
                    gradient_mode, noise_sigma_multiplier,
-                   rbar2_gate, weight_file, angle_frame, output_bin)
+                   rbar2_gate, weight_file, angle_frame, output_bin, velocity_range_kms)
     end
 end
 
@@ -86,7 +93,8 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
                    rbar2_gate=0.0,
                    weight_file="",
                    angle_frame=:pixel,
-                   output_bin=1)
+                   output_bin=1,
+                   velocity_range_kms=Float64[])
     return VGTConfig(
         String(input_file),
         String(output_dir),
@@ -108,6 +116,7 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         String(weight_file),
         normalize_angle_frame(angle_frame),
         Int(output_bin),
+        Float64.(collect(velocity_range_kms)),
     )
 end
 
@@ -125,6 +134,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
                    weight_file="",
                    angle_frame=:pixel,
                    output_bin=1,
+                   velocity_range_kms=Float64[],
                    # Removed in 0.1.0; only the old default value is tolerated.
                    finalize_mask_mode=nothing,
                    histogram_edge_mode=nothing,
@@ -157,6 +167,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         String(weight_file),
         normalize_angle_frame(angle_frame),
         Int(output_bin),
+        Float64.(collect(velocity_range_kms)),
     )
 end
 
@@ -363,7 +374,7 @@ function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
 end
 
 const VGT_CONFIG_TABLE_KEYS = Dict(
-    "input" => Set(["input_file", "output_dir", "keep_intermediate_chunks", "weight_file"]),
+    "input" => Set(["input_file", "output_dir", "keep_intermediate_chunks", "weight_file", "velocity_range_kms"]),
     "noise" => Set([
         "noise", "noise_mode", "noise_tile_size", "noise_sigma_multiplier",
         "noise_spatial_exponent", "noise_channel_exponent",  # obsolete, see OBSOLETE_CONFIG_KEYS
@@ -440,6 +451,7 @@ function load_config(path::AbstractString="config.toml")
         weight_file=String(_config_key_or(cfg, "weight_file", "")),
         angle_frame=_config_key_or(cfg, "angle_frame", :pixel),
         output_bin=_config_key_or(cfg, "output_bin", 1),
+        velocity_range_kms=_config_key_or(cfg, "velocity_range_kms", Float64[]),
         # Obsolete keys: the constructor accepts the old default with a
         # warning and rejects anything else.
         finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),
@@ -448,4 +460,21 @@ function load_config(path::AbstractString="config.toml")
         noise_spatial_exponent=get(cfg, "noise_spatial_exponent", nothing),
         noise_channel_exponent=get(cfg, "noise_channel_exponent", nothing),
     ))
+end
+
+"""
+    selected_channels(cfg, header, nv) -> UnitRange{Int}
+
+Channels (1-based) of the input cube used by the run: all of them, or those whose
+centres lie inside `cfg.velocity_range_kms` (inclusive, 1e-6 km/s tolerance).
+The spectral axis comes from CRVAL3/CRPIX3/CDELT3 (`velocity_axis_kms`).
+"""
+function selected_channels(cfg::VGTConfig, header, nv::Int)
+    isempty(cfg.velocity_range_kms) && return 1:nv
+    lo, hi = cfg.velocity_range_kms
+    v, _ = velocity_axis_kms(header, nv)
+    inside = findall(x -> lo - 1e-6 <= x <= hi + 1e-6, v)
+    isempty(inside) && throw(ArgumentError(
+        "velocity_range_kms = [$lo, $hi] contains no channel centre; the cube spans $(minimum(v))..$(maximum(v)) km/s"))
+    return first(inside):last(inside)   # contiguous: the axis is linear
 end

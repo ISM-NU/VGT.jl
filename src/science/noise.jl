@@ -59,14 +59,15 @@ function estimate_channel_noise(cube::AbstractArray{<:Any, 3}; fallback::Real,
 end
 
 function estimate_channel_noise(path::AbstractString; fallback::Real,
-                                min_count::Int=100)
+                                min_count::Int=100, channels=nothing)
+    # channels: the input channels to use (velocity_range_kms); nothing = all.
     f = FITS(path)
     try
-        _, _, nv = size(f[1])
-        out = fill(Float64(fallback), nv)
-        for k in 1:nv
+        ks = channels === nothing ? (1:size(f[1], 3)) : channels
+        out = fill(Float64(fallback), length(ks))
+        for (i, k) in enumerate(ks)
             sl = read(f[1], :, :, k:k)[:, :, 1]
-            out[k] = _finite_positive_or(robust_negative_noise(sl; min_count=min_count), fallback)
+            out[i] = _finite_positive_or(robust_negative_noise(sl; min_count=min_count), fallback)
         end
         return out
     finally
@@ -92,7 +93,7 @@ function estimate_spatial_noise(cube::AbstractArray{<:Any, 3}; fallback::Real,
 end
 
 function estimate_spatial_noise(path::AbstractString; fallback::Real,
-                                tile_size::Int=128, min_count::Int=100)
+                                tile_size::Int=128, min_count::Int=100, channels=nothing)
     tile_size >= 1 || throw(ArgumentError("noise_tile_size must be >= 1; got $tile_size"))
     f = FITS(path)
     try
@@ -101,7 +102,7 @@ function estimate_spatial_noise(path::AbstractString; fallback::Real,
         for y1 in 1:tile_size:ny, x1 in 1:tile_size:nx
             x2 = min(nx, x1 + tile_size - 1)
             y2 = min(ny, y1 + tile_size - 1)
-            tile = read(f[1], x1:x2, y1:y2, :)
+            tile = read(f[1], x1:x2, y1:y2, channels === nothing ? (:) : channels)
             est = _finite_positive_or(robust_negative_noise(tile; min_count=min_count), fallback)
             out[x1:x2, y1:y2] .= est
         end
@@ -188,26 +189,27 @@ end
 
 function build_noise_model(path::AbstractString, scalar_noise::Real,
                            mode::Symbol; tile_size::Int=128,
-                           spread_threshold_pct::Real=35.0)
+                           spread_threshold_pct::Real=35.0, channels=nothing)
     # Build a NoiseModel directly from a FITS file without requiring the full cube
-    # to stay in memory.
+    # to stay in memory. channels restricts the estimates to the selected input
+    # channels (velocity_range_kms), so they match a cube cut to those channels.
     scalar = Float64(scalar_noise)
     scalar > 0 || throw(ArgumentError("scalar noise must be > 0"))
     mode === :scalar && return NoiseModel(:scalar, scalar, nothing, nothing)
 
     if mode === :channel
-        channel = estimate_channel_noise(path; fallback=scalar)
+        channel = estimate_channel_noise(path; fallback=scalar, channels=channels)
         return NoiseModel(:channel, _channel_scalar(channel, scalar), channel, nothing)
     elseif mode === :spatial
-        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size)
+        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size, channels=channels)
         return NoiseModel(:spatial, scalar, nothing, spatial)
     elseif mode === :separable
-        channel = estimate_channel_noise(path; fallback=scalar)
-        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size)
+        channel = estimate_channel_noise(path; fallback=scalar, channels=channels)
+        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size, channels=channels)
         return NoiseModel(:separable, _channel_scalar(channel, scalar), channel, spatial)
     elseif mode === :auto
-        channel = estimate_channel_noise(path; fallback=scalar)
-        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size)
+        channel = estimate_channel_noise(path; fallback=scalar, channels=channels)
+        spatial = estimate_spatial_noise(path; fallback=scalar, tile_size=tile_size, channels=channels)
         selected = _select_auto_noise_mode(channel, spatial, spread_threshold_pct)
         estimated_scalar = _channel_scalar(channel, scalar)
         if selected === :channel

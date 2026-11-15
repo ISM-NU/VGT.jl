@@ -18,6 +18,10 @@ keep_intermediate_chunks = false
 # VGT on VDA velocity caustics (scripts/vda_velocity_caustics.jl).
 # weight_file = ""
 
+# Velocity window [lo, hi] in km/s: only channels whose centres lie inside it are
+# used, exactly as if the cube were cut to them. Empty (default) = all channels.
+# velocity_range_kms = [3.0, 7.0]
+
 [noise]
 # 1-sigma noise floor in data units. Estimate with scripts/analyze_inputs.jl
 # (use its "Suggested config: noise = ..." line).

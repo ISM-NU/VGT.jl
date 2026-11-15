@@ -48,6 +48,7 @@ function run_parameters(cfg::VGTConfig; label::AbstractString=DEFAULT_RUN_FAMILY
     # Only a sky frame enters the run name, so pixel-frame run directories keep their names.
     cfg.angle_frame === :pixel || (params["angle_frame"] = String(cfg.angle_frame))
     cfg.output_bin == 1 || (params["output_bin"] = cfg.output_bin)
+    isempty(cfg.velocity_range_kms) || (params["vrange"] = join(string.(cfg.velocity_range_kms), "_"))
     return params
 end
 

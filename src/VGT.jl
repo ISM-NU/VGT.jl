@@ -38,7 +38,7 @@ export fit_axial_vonmises, fit_window_angle
 export robust_negative_noise, estimate_channel_noise, estimate_spatial_noise
 export NoiseModel, separable_noise_cube, build_noise_model
 export noise_for_chunk, build_noise_cube
-export velocity_axis_kms
+export velocity_axis_kms, selected_channels
 export VGT_QU_mv_2d, VGT_QU_mv_2d_profiled
 export process_chunk, chunk_y_bounds, save_chunk_atomic
 export NEGATIVE_MAD_NORMAL

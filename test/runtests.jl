@@ -11,6 +11,7 @@ using Test
     include("write_outputs.jl")
     include("sky_angles.jl")
     include("output_bin.jl")
+    include("velocity_range.jl")
     include("regrid.jl")
     include("pipeline_fit_diagnostics.jl")
 end

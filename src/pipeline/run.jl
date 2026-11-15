@@ -18,6 +18,8 @@ Base.@kwdef struct PipelineRun
     fit_support::Matrix{Float64}
     header
     diagnostics::VGTDiagnostics
+    # Input channels used (all, or the velocity_range_kms window).
+    channels::UnitRange{Int} = 1:0
     performance::NamedTuple = (;
         julia_threads=Threads.nthreads(),
         ny_chunks=-1,
@@ -40,6 +42,16 @@ function _with_output_dir(cfg::VGTConfig, output_dir::AbstractString)
     return config_with(cfg; output_dir=String(output_dir))
 end
 
+# Header of the cube cut to `channels`: the spectral axis starts at the first
+# selected channel, so products carry the window a cut cube would carry.
+function window_header(header, channels::UnitRange{Int}, nv_input::Int)
+    channels == 1:nv_input && return header
+    h = deepcopy(header)
+    haskey(h, "CRPIX3") && (h["CRPIX3"] = Float64(h["CRPIX3"]) - (first(channels) - 1))
+    haskey(h, "NAXIS3") && (h["NAXIS3"] = length(channels))
+    return h
+end
+
 function run_pipeline(cfg::VGTConfig)
     # Resolve execution settings, process every chunk, stitch chunk products,
     # then convert accumulated Q/U/I into final psi and reliability maps.
@@ -53,25 +65,30 @@ function run_pipeline(cfg::VGTConfig)
 
     try
         isfile(cfg.input_file) || error("$(cfg.input_file) not found. Current directory: $(pwd())")
-        nx, ny, nv, header = read_cube_metadata(cfg.input_file)
+        nx, ny, nv_input, header = read_cube_metadata(cfg.input_file)
+        channels = selected_channels(cfg, header, nv_input)
+        nv = length(channels)
+        header = window_header(header, channels, nv_input)
         resolved_cfg = resolve_execution_config(cfg, nx, ny, nv)
         # Fail before the expensive part if a sky frame is asked for a cube without one.
         cfg.angle_frame === :pixel || (_celestial_wcs(header); _map_frame(header))
         @info "Resolved execution settings" julia_threads=Threads.nthreads() chunks=resolved_cfg.ny_chunks memory_budget_gb=round(memory_budget_bytes() / 1024^3; digits=1)
-        isempty(cfg.weight_file) || (read_cube_metadata(cfg.weight_file)[1:3] == (nx, ny, nv) ||
+        isempty(cfg.weight_file) || (read_cube_metadata(cfg.weight_file)[1:3] == (nx, ny, nv_input) ||
             error("weight_file $(cfg.weight_file) does not match the size of $(cfg.input_file)"))
         noise_model = build_noise_model(
             weight_source(resolved_cfg),
             resolved_cfg.noise,
             resolved_cfg.noise_mode;
             tile_size=resolved_cfg.noise_tile_size,
+            channels=channels,
         )
+        nv == nv_input || @info "Velocity window" velocity_range_kms=cfg.velocity_range_kms channels=channels
         @info "Resolved noise model" requested=resolved_cfg.noise_mode resolved=noise_model.mode scalar_noise=noise_model.scalar noise_threshold=noise_model.scalar * resolved_cfg.noise_sigma_multiplier noise_sigma_multiplier=resolved_cfg.noise_sigma_multiplier tile_size=resolved_cfg.noise_tile_size
 
         # Chunk processing writes intermediate Q/U/I and diagnostics to disk so
         # large cubes do not need a full in-memory working cube.
         for j in 1:resolved_cfg.ny_chunks
-            process_chunk(j, resolved_cfg, ny, nv; noise_model=noise_model)
+            process_chunk(j, resolved_cfg, ny, nv; noise_model=noise_model, channels=channels)
         end
         q_stitched, u_stitched, intensity_stitched, diagnostics, fit_maps = stitch_chunk_outputs(resolved_cfg, nx, ny)
         finalized = finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, resolved_cfg.ker,
@@ -105,6 +122,7 @@ function run_pipeline(cfg::VGTConfig)
             fit_support=products.fit_support,
             header=products.header,
             diagnostics=diagnostics,
+            channels=channels,
             performance=performance,
         )
     catch err

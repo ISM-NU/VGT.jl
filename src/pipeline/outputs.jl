@@ -76,6 +76,7 @@ function run_metadata(run::PipelineRun, outputs)
             "size_bytes" => isfile(cfg.input_file) ? filesize(cfg.input_file) : -1,
             "weight_file" => cfg.weight_file,
             "angle_frame" => String(cfg.angle_frame),
+            "channels_used" => isempty(run.channels) ? Int[] : [first(run.channels), last(run.channels)],
         ),
         "run_parameters" => run_parameters(cfg),
         "config" => _config_metadata(cfg),
@@ -133,6 +134,10 @@ function vgt_product_header(input_header, cfg::VGTConfig, product::Symbol)
         ("VGTNOISE", Float64(cfg.noise), "noise threshold input (K)"),
         ("VGTBIN", cfg.output_bin, "output pixel = VGTBIN x VGTBIN input pixels"),
     ]
+    if !isempty(cfg.velocity_range_kms)
+        push!(cards, ("VGTVLO", cfg.velocity_range_kms[1], "velocity window low end (km/s)"))
+        push!(cards, ("VGTVHI", cfg.velocity_range_kms[2], "velocity window high end (km/s)"))
+    end
     if product === :psi
         if cfg.angle_frame === :pixel
             push!(cards, ("PSIFRAME", "PIXEL", "CCW from +axis 1 in pixel grid; not east of N"))
@@ -177,6 +182,7 @@ function _config_metadata(cfg::VGTConfig)
         "gradient_mode" => _metadata_value(cfg.gradient_mode),
         "angle_frame" => _metadata_value(cfg.angle_frame),
         "output_bin" => cfg.output_bin,
+        "velocity_range_kms" => cfg.velocity_range_kms,
     )
 end
 

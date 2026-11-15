@@ -444,7 +444,7 @@ function save_chunk_atomic(filename::String, q_accum, u_accum, intensity_accum, 
     end
 end
 
-function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=nothing)
+function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=nothing, channels=1:nv)
     # Large FITS cubes are processed in y chunks. Each chunk includes padding so
     # sliding windows near chunk boundaries still see the same neighbors they
     # would see in a full-cube run.
@@ -459,13 +459,16 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
         pad = chunk_padding_pixels(cfg)
         py_start = max(1, y_start - pad)
         py_end = min(ny, y_end + pad)
-        sub_cube = read(f[1], :, py_start:py_end, :)
-        sub_weight = fw === nothing ? nothing : read(fw[1], :, py_start:py_end, :)
+        # Only the selected channels are read (velocity_range_kms); nv is their count.
+        length(channels) == nv || throw(ArgumentError("channels ($(length(channels))) must have nv=$nv entries"))
+        sub_cube = read(f[1], :, py_start:py_end, channels)
+        sub_weight = fw === nothing ? nothing : read(fw[1], :, py_start:py_end, channels)
         resolved_noise_model = noise_model === nothing ? build_noise_model(
             weight_source(cfg),
             cfg.noise,
             cfg.noise_mode;
             tile_size=cfg.noise_tile_size,
+            channels=channels,
         ) : noise_model
         noise = noise_for_chunk(
             resolved_noise_model,
