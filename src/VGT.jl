@@ -37,6 +37,8 @@ export WindowFitResult, fit_window_result
 export fit_axial_vonmises, fit_window_angle
 export robust_negative_noise, estimate_channel_noise, estimate_spatial_noise
 export NoiseModel, separable_noise_cube, build_noise_model
+export measure_gradient_noise, gradient_anisotropy, gradient_noise_cov_map
+export read_gradient_noise_cov_map, write_gradient_noise_cov_map
 export noise_for_chunk, build_noise_cube
 export velocity_axis_kms, selected_channels
 export VGT_QU_mv_2d, VGT_QU_mv_2d_profiled

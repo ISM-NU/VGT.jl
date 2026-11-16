@@ -44,6 +44,19 @@ struct VGTConfig
     # Velocity window [lo, hi] in km/s: only channels whose centres lie inside it
     # (inclusive) are used, as if the cube were cut to them. Empty = all channels.
     velocity_range_kms::Vector{Float64}
+    # Optional whitening of the gradient components (off by default). With
+    # gradient_whiten every gradient is mapped by C^(-1/2), C = gradient_noise_cov
+    # = [sxx, syy, sxy] scaled to unit determinant, so anisotropic noise gradients
+    # have no preferred angle; each window's fitted angle is mapped back with
+    # C^(1/2). C is the covariance of one gradient (data units per pixel) in
+    # emission-free channels with the stencil of gradient_mode (see
+    # `measure_gradient_noise`).
+    gradient_whiten::Bool
+    gradient_noise_cov::Vector{Float64}
+    # Alternative to gradient_noise_cov for noise whose anisotropy varies across
+    # the map: FITS cube (nx, ny, 3) of (sxx, syy, sxy) on the input's sky grid,
+    # used per pixel (see `gradient_noise_cov_map`). Exclusive with the constant.
+    gradient_noise_cov_file::String
 
     function VGTConfig(input_file::String, output_dir::String,
                        keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
@@ -59,13 +72,17 @@ struct VGTConfig
                        weight_file::String="",
                        angle_frame::Symbol=:pixel,
                        output_bin::Int=1,
-                       velocity_range_kms::Vector{Float64}=Float64[])
+                       velocity_range_kms::Vector{Float64}=Float64[],
+                       gradient_whiten::Bool=false,
+                       gradient_noise_cov::Vector{Float64}=Float64[],
+                       gradient_noise_cov_file::String="")
         # Validate here so invalid science settings fail before a large FITS
         # cube run starts.
         _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
                                 noise_mode, noise_tile_size,
                                 noise_sigma_multiplier, zero_stokes_policy,
-                                output_support_mode, gradient_mode, rbar2_gate)
+                                output_support_mode, gradient_mode, rbar2_gate,
+                                gradient_whiten, gradient_noise_cov, gradient_noise_cov_file)
         angle_frame in ANGLE_FRAMES ||
             throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
         output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(output_bin)"))
@@ -77,7 +94,8 @@ struct VGTConfig
                    rbar2_weight, noise_mode,
                    noise_tile_size, zero_stokes_policy, output_support_mode,
                    gradient_mode, noise_sigma_multiplier,
-                   rbar2_gate, weight_file, angle_frame, output_bin, velocity_range_kms)
+                   rbar2_gate, weight_file, angle_frame, output_bin, velocity_range_kms,
+                   gradient_whiten, gradient_noise_cov, gradient_noise_cov_file)
     end
 end
 
@@ -94,7 +112,10 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
                    weight_file="",
                    angle_frame=:pixel,
                    output_bin=1,
-                   velocity_range_kms=Float64[])
+                   velocity_range_kms=Float64[],
+                   gradient_whiten=false,
+                   gradient_noise_cov=Float64[],
+                   gradient_noise_cov_file="")
     return VGTConfig(
         String(input_file),
         String(output_dir),
@@ -117,6 +138,9 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         normalize_angle_frame(angle_frame),
         Int(output_bin),
         collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
+        Bool(gradient_whiten),
+        collect(Float64, gradient_noise_cov),
+        String(gradient_noise_cov_file),
     )
 end
 
@@ -135,6 +159,9 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
                    angle_frame=:pixel,
                    output_bin=1,
                    velocity_range_kms=Float64[],
+                   gradient_whiten=false,
+                   gradient_noise_cov=Float64[],
+                   gradient_noise_cov_file="",
                    # Removed in 0.1.0; only the old default value is tolerated.
                    finalize_mask_mode=nothing,
                    histogram_edge_mode=nothing,
@@ -168,6 +195,9 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         normalize_angle_frame(angle_frame),
         Int(output_bin),
         collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
+        Bool(gradient_whiten),
+        collect(Float64, gradient_noise_cov),
+        String(gradient_noise_cov_file),
     )
 end
 
@@ -260,7 +290,8 @@ function _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
                                  noise_mode, noise_tile_size,
                                  noise_sigma_multiplier, zero_stokes_policy,
                                  output_support_mode, gradient_mode,
-                                 rbar2_gate=0.0)
+                                 rbar2_gate=0.0, gradient_whiten=false,
+                                 gradient_noise_cov=Float64[], gradient_noise_cov_file="")
     noise > 0 || throw(ArgumentError("noise must be > 0"))
     dn >= 2 || throw(ArgumentError("dn must be >= 2"))
     iseven(dn) || throw(ArgumentError("dn must be even; got $dn"))
@@ -283,6 +314,27 @@ function _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
+    _validate_gradient_whiten(gradient_whiten, gradient_noise_cov, gradient_noise_cov_file, gradient_mode)
+    return nothing
+end
+
+function _validate_gradient_whiten(gradient_whiten, gradient_noise_cov, gradient_noise_cov_file, gradient_mode)
+    gradient_whiten || return nothing
+    has_const = !isempty(gradient_noise_cov)
+    has_file = !isempty(gradient_noise_cov_file)
+    (has_const && has_file) &&
+        throw(ArgumentError("set either gradient_noise_cov or gradient_noise_cov_file, not both"))
+    (has_const || has_file) ||
+        throw(ArgumentError("gradient_whiten needs gradient_noise_cov = [sxx, syy, sxy] or gradient_noise_cov_file (covariance of one gradient in emission-free channels; see scripts/analyze_inputs.jl --noise-vrange)"))
+    if has_const
+        length(gradient_noise_cov) == 3 ||
+            throw(ArgumentError("gradient_noise_cov must be [sxx, syy, sxy]; got $(gradient_noise_cov)"))
+        sxx, syy, sxy = gradient_noise_cov
+        (all(isfinite, gradient_noise_cov) && sxx > 0 && syy > 0 && sxx * syy - sxy^2 > 0) ||
+            throw(ArgumentError("gradient_noise_cov = [sxx, syy, sxy] must be finite and positive definite (sxx > 0, syy > 0, sxx*syy > sxy^2); got $(gradient_noise_cov)"))
+    end
+    gradient_mode === :nan_edge_backward &&
+        throw(ArgumentError("gradient_whiten is not supported with gradient_mode=:nan_edge_backward; use :central_checked or :sobel_checked"))
     return nothing
 end
 
@@ -291,7 +343,8 @@ function validate_static_config(cfg::VGTConfig)
                             cfg.fitter_mode, cfg.noise_mode, cfg.noise_tile_size,
                             cfg.noise_sigma_multiplier, cfg.zero_stokes_policy,
                             cfg.output_support_mode, cfg.gradient_mode,
-                            cfg.rbar2_gate)
+                            cfg.rbar2_gate, cfg.gradient_whiten, cfg.gradient_noise_cov,
+                            cfg.gradient_noise_cov_file)
     return cfg
 end
 
@@ -369,6 +422,13 @@ function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
     cfg.output_bin <= min(nx, ny) ||
         throw(ArgumentError("output_bin=$(cfg.output_bin) is larger than the map ($nx x $ny pixels)"))
 
+    if cfg.gradient_whiten && !isempty(cfg.gradient_noise_cov_file)
+        isfile(cfg.gradient_noise_cov_file) ||
+            throw(ArgumentError("gradient_noise_cov_file not found: $(cfg.gradient_noise_cov_file)"))
+        size(read_gradient_noise_cov_map(cfg.gradient_noise_cov_file)) == (nx, ny, 3) ||
+            throw(ArgumentError("gradient_noise_cov_file must be a ($nx, $ny, 3) cube (sxx, syy, sxy) on the input grid"))
+    end
+
     cpu_threads = max(1, Threads.nthreads())
     budget = memory_budget_bytes()
     auto_execution = choose_auto_execution(cfg, nx, ny, nv, cpu_threads, budget)
@@ -381,6 +441,7 @@ const VGT_CONFIG_TABLE_KEYS = Dict(
     "input" => Set(["input_file", "output_dir", "keep_intermediate_chunks", "weight_file", "velocity_range_kms"]),
     "noise" => Set([
         "noise", "noise_mode", "noise_tile_size", "noise_sigma_multiplier",
+        "gradient_whiten", "gradient_noise_cov", "gradient_noise_cov_file",
         "noise_spatial_exponent", "noise_channel_exponent",  # obsolete, see OBSOLETE_CONFIG_KEYS
     ]),
     "vgt" => Set([
@@ -456,6 +517,9 @@ function load_config(path::AbstractString="config.toml")
         angle_frame=_config_key_or(cfg, "angle_frame", :pixel),
         output_bin=_config_key_or(cfg, "output_bin", 1),
         velocity_range_kms=_config_key_or(cfg, "velocity_range_kms", Float64[]),
+        gradient_whiten=Bool(_config_key_or(cfg, "gradient_whiten", false)),
+        gradient_noise_cov=collect(Float64, _config_key_or(cfg, "gradient_noise_cov", Float64[])),
+        gradient_noise_cov_file=String(_config_key_or(cfg, "gradient_noise_cov_file", "")),
         # Obsolete keys: the constructor accepts the old default with a
         # warning and rejects anything else.
         finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),

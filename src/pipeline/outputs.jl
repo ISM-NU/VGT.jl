@@ -183,6 +183,9 @@ function _config_metadata(cfg::VGTConfig)
         "angle_frame" => _metadata_value(cfg.angle_frame),
         "output_bin" => cfg.output_bin,
         "velocity_range_kms" => cfg.velocity_range_kms,
+        "gradient_whiten" => cfg.gradient_whiten,
+        "gradient_noise_cov" => cfg.gradient_noise_cov,
+        "gradient_noise_cov_file" => cfg.gradient_noise_cov_file,
     )
 end
 

@@ -2,6 +2,7 @@ using DrWatson
 quickactivate(@__DIR__, "VGT")
 
 using FITSIO, Statistics, Printf, StatsBase
+using VGT: measure_gradient_noise, velocity_axis_kms, gradient_noise_cov_map, write_gradient_noise_cov_map
 
 const NORMAL_MAD = 0.6744897501960817
 
@@ -394,9 +395,57 @@ function analyze_file(filepath::String; label::String="")
     println()
 end
 
+# Gradient noise covariance in emission-free channels, for the config keys
+# `gradient_whiten` / `gradient_noise_cov`. One line per production stencil: the
+# covariance must come from the stencil of the gradient_mode in use.
+function report_gradient_noise(filepath::String, vrange::Tuple{Float64,Float64};
+                               cov_map::String="", cov_fwhm::Float64=60.0, cov_mode::Symbol=:central_checked)
+    lo, hi = vrange
+    f = FITS(filepath)
+    try
+        hdr = read_header(f[1])
+        nv = size(f[1], 3)
+        v, _ = velocity_axis_kms(hdr, nv)
+        chans = findall(x -> lo <= x <= hi, v)
+        isempty(chans) && error("no channel centre in [$lo, $hi] km/s (cube spans $(minimum(v))..$(maximum(v)))")
+        cube = read(f[1], :, :, first(chans):last(chans))
+        println("\n── Gradient noise (emission-free channels $(first(chans))..$(last(chans)), $(length(chans)) ch, $lo..$hi km/s)")
+        for mode in (:central_checked, :sobel_checked)
+            m = measure_gradient_noise(cube; gradient_mode=mode)
+            @printf("  %s: sigma_gx = %.5g  sigma_gy = %.5g  anisotropy A = %.4f  preferred direction = %.1f deg (from +x)\n",
+                    mode, m.sigma_x, m.sigma_y, m.anisotropy, m.direction_deg)
+            @printf("    gradient_noise_cov = [%.8g, %.8g, %.8g]   # [sxx, syy, sxy], gradient_mode = \"%s\"\n",
+                    m.cov[1], m.cov[2], m.cov[3], mode)
+        end
+        println("  Paste the line for your gradient_mode into [noise] and set gradient_whiten = true.")
+        if !isempty(cov_map)
+            covmap = gradient_noise_cov_map(cube; gradient_mode=cov_mode, fwhm_pixels=cov_fwhm)
+            write_gradient_noise_cov_map(cov_map, covmap; gradient_mode=cov_mode, fwhm_pixels=cov_fwhm)
+            A = [hypot(covmap[i, j, 1] - covmap[i, j, 2], 2covmap[i, j, 3]) / (covmap[i, j, 1] + covmap[i, j, 2])
+                 for i in axes(covmap, 1), j in axes(covmap, 2)]
+            ang = [rad2deg(0.5 * atan(2covmap[i, j, 3], covmap[i, j, 1] - covmap[i, j, 2]))
+                   for i in axes(covmap, 1), j in axes(covmap, 2)]
+            @printf("  Wrote spatially varying covariance map %s (%s, smoothing FWHM %.1f px): A %.4f..%.4f, direction %.1f..%.1f deg\n",
+                    cov_map, cov_mode, cov_fwhm, extrema(filter(isfinite, A))..., extrema(filter(isfinite, ang))...)
+            println("  Use it with gradient_noise_cov_file = \"$cov_map\" (instead of gradient_noise_cov).")
+        end
+    finally
+        close(f)
+    end
+end
+
 function usage()
     println("Usage:")
-    println("  julia scripts/analyze_inputs.jl [fits_path ...]")
+    println("  julia scripts/analyze_inputs.jl [--noise-vrange=LO,HI [--cov-map=OUT.fits] [--cov-fwhm=PX]\n                                [--cov-mode=central_checked|sobel_checked]] [fits_path ...]")
+    println()
+    println("--noise-vrange=LO,HI  also measure the gradient noise covariance (central-difference")
+    println("                      and Sobel stencils) in the channels with centres in LO..HI")
+    println("                      km/s, which must be emission-free. Prints the config value")
+    println("                      gradient_noise_cov and the anisotropy A.")
+    println("--cov-map=OUT.fits    also write the per-pixel covariance (3 planes sxx, syy, sxy)")
+    println("                      from the same channels, smoothed with a Gaussian of FWHM")
+    println("                      --cov-fwhm pixels (default 60, about 3 x dn), for")
+    println("                      gradient_noise_cov_file. --cov-mode picks the stencil.")
     println()
     println("If no FITS paths are provided, the script analyzes the built-in default file list.")
 end
@@ -418,19 +467,45 @@ function parse_args(args)
 
     files = Tuple{String,String}[]
     for path in args
+        any(p -> startswith(path, p), ("--noise-vrange=", "--cov-map=", "--cov-fwhm=", "--cov-mode=")) && continue
         startswith(path, "--") && error("Unknown option: $path")
         push!(files, (path, basename(path)))
     end
+    isempty(files) && return default_files()
     return files
+end
+
+function option_value(args, name)
+    for arg in args
+        startswith(arg, name * "=") && return arg[(length(name) + 2):end]
+    end
+    return nothing
+end
+
+function parse_noise_vrange(args)
+    for arg in args
+        startswith(arg, "--noise-vrange=") || continue
+        parts = split(arg[(length("--noise-vrange=") + 1):end], ",")
+        length(parts) == 2 || error("--noise-vrange expects LO,HI")
+        lo, hi = parse.(Float64, parts)
+        lo < hi || error("--noise-vrange needs LO < HI")
+        return (lo, hi)
+    end
+    return nothing
 end
 
 function main(args)
     files = parse_args(args)
     files === nothing && return 0
+    vrange = parse_noise_vrange(args)
 
     for (path, lbl) in files
         if isfile(path)
             analyze_file(path; label=lbl)
+            vrange === nothing || report_gradient_noise(path, vrange;
+                cov_map=something(option_value(args, "--cov-map"), ""),
+                cov_fwhm=parse(Float64, something(option_value(args, "--cov-fwhm"), "60")),
+                cov_mode=Symbol(something(option_value(args, "--cov-mode"), "central_checked")))
         else
             println("\nFILE NOT FOUND: $path")
         end

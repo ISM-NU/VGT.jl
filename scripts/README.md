@@ -19,7 +19,11 @@ they do not replace the script-specific FITS, text, or CSV outputs.
 `analyze_inputs.jl`
 : Inspects a FITS cube, reports header metadata, estimates 1σ noise from negative
   pixels or a labeled no-negative fallback, summarizes channel occupancy, and
-  recommends `noise` and masking choices.
+  recommends `noise` and masking choices. `--noise-vrange=LO,HI` also measures
+  the gradient noise (central and Sobel)
+  in emission-free channels: the gradient covariance `gradient_noise_cov`, the
+  anisotropy A and its direction. `--cov-map=OUT.fits [--cov-fwhm=PX]` also writes
+  the smoothed per-pixel covariance cube for `gradient_noise_cov_file`.
 
 `channel_quality_report.jl`
 : Writes a per-channel CSV with robust noise, above-threshold fill at 1/2/3σ,
@@ -61,6 +65,14 @@ they do not replace the script-specific FITS, text, or CSV outputs.
   `:sobel_checked` across fractional `min_valid` thresholds using angle error,
   support and `rbar2`. Focused sweeps can be filtered with `VGT_MW_MODES`,
   `VGT_MW_FITTERS`, `VGT_MW_MIN_VALID` and `VGT_MW_SIZE`.
+
+`validate_gradient_whitening.jl`
+: Opt-in gradient whitening (`gradient_whiten`) against correlated, slightly
+  anisotropic noise: angle bias toward the noise direction, scatter and coverage on
+  a ramp and on filament morphologies, with Q/U smoothing as in production;
+  also isotropic-noise, mis-estimated-covariance and spatially varying noise
+  (global covariance against a per-pixel map) cases. Results in
+  `docs/validation-gradient-whitening.md`.
 
 `validate_vgt_parameters.jl`
 : Candidate scan for `dn`, `min_valid` and experimental `rbar2` accumulation

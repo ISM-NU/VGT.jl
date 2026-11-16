@@ -31,6 +31,27 @@ noise = 0.17
 # conservative 3-sigma threshold, set noise to the 1-sigma estimate and this to 3.0.
 noise_sigma_multiplier = 1.0
 
+# Optional whitening of the gradient components (default off, output unchanged).
+# Correlated, slightly anisotropic noise gives gradients a preferred direction
+# that pulls each window's angle toward it. With gradient_whiten = true every
+# gradient is mapped by C^(-1/2) (C = gradient_noise_cov scaled to unit
+# determinant) and each window's angle is mapped back with C^(1/2).
+# gradient_noise_cov = [sxx, syy, sxy] is the covariance of one gradient (data
+# units per pixel) in emission-free channels, measured with the stencil of
+# gradient_mode: scripts/analyze_inputs.jl cube.fits --noise-vrange=LO,HI prints
+# the line to paste. Required when on, must be positive definite; gradient_mode
+# central_checked or sobel_checked. Read docs/validation-gradient-whitening.md first.
+#
+# If the anisotropy changes across the map (direction or A), use a per-pixel
+# covariance instead: gradient_noise_cov_file = "path.fits", a (nx, ny, 3) cube of
+# sxx, syy, sxy on the input's sky grid. Build it with
+# scripts/analyze_inputs.jl cube.fits --noise-vrange=LO,HI --cov-map=path.fits
+# [--cov-fwhm=PX] (NaN-aware Gaussian smoothing, default FWHM 60 px = 3 x dn).
+# Set one of the two, not both.
+# gradient_whiten = false
+# gradient_noise_cov = [0.25, 0.25, 0.0]
+# gradient_noise_cov_file = ""
+
 [vgt]
 # Window size in pixels (even). Larger dn averages more gradients per window
 # (smoother, less detail) and costs more RAM and compute per chunk.

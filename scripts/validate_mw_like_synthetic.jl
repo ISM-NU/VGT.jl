@@ -96,9 +96,14 @@ function add_component!(cube, truth::TruthMaps, signal, angle, channels;
     return nothing
 end
 
+# Scale of the white noise added by the builders (1 = as designed). Scripts that
+# include this file set it to 0 to get the planted structure alone.
+const NOISE_SCALE = Ref(1.0)
+
 function add_noise!(cube, sigma::Float64, rng)
+    NOISE_SCALE[] == 0.0 && return cube
     @inbounds for idx in eachindex(cube)
-        cube[idx] += sigma * randn(rng)
+        cube[idx] += sigma * NOISE_SCALE[] * randn(rng)
     end
     return cube
 end

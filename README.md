@@ -184,6 +184,7 @@ Runtime parameters live in `config.toml`. `config.example.toml` is the template 
   `data/sims/vgt/<parameter-name>/`.
 - `keep_intermediate_chunks`: retain or delete `chunk_2d_*.jld2` after a successful run
 - `noise`, `noise_mode`, `noise_tile_size`, `noise_sigma_multiplier`: threshold model for the VGT mask
+- `gradient_whiten`, `gradient_noise_cov` (constant) or `gradient_noise_cov_file` (per-pixel map): optional whitening of the gradient components against anisotropic correlated noise (off by default); see `docs/validation-gradient-whitening.md` before enabling
 - `dn`, `ker`, `min_valid`: VGT window, smoothing, and minimum-valid-pixel parameters
 - `fitter_mode`: `"axial_vonmises"` (the only fitter)
 - `zero_stokes_policy`: whether zero Q/U support is converted to `NaN` before smoothing

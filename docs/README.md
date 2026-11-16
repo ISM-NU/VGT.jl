@@ -12,6 +12,9 @@ evidence, or reference).
 - `synthetic-fitter-validation-notes.md` — synthetic-cube evidence for fitter
   defaults (including the removed Gaussian histogram baseline) and follow-up
   accuracy candidates. Validation evidence.
+- `validation-gradient-whitening.md` — synthetic test of opt-in gradient
+  whitening against correlated, anisotropic noise (and the rejected gradient
+  S/N mask). Validation evidence.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.

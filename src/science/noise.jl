@@ -263,3 +263,205 @@ function build_noise_cube(cube::AbstractArray{<:Any, 3}, scalar_noise::Real,
     return noise_for_chunk(model, size(cube, 1), 1:size(cube, 2), size(cube, 3);
                            multiplier=multiplier)
 end
+
+"""
+    measure_gradient_noise(cube; gradient_mode=:central_checked)
+
+Covariance of the gradient vector (gx, gy) over all interior pixels of `cube`
+(x, y, channel), with the same stencil and normalisation as the VGT kernel
+(`:central_checked`: (a - b) / 2; `:sobel_checked`: Sobel / 8). Pass only
+emission-free channels. Returns a named tuple: `cov = [sxx, syy, sxy]` (the
+`gradient_noise_cov` config value), `sigma_x`, `sigma_y`, the gradient
+anisotropy `anisotropy` = |sum g^2 e^(2i theta)| / sum g^2 and the preferred
+gradient `direction_deg` (axis of the larger variance, counter-clockwise from
++x), and `n`. Non-finite pixels are skipped.
+"""
+function measure_gradient_noise(cube::AbstractArray{<:Real, 3};
+                                gradient_mode::Symbol=:central_checked)
+    gradient_mode in (:central_checked, :sobel_checked) ||
+        throw(ArgumentError("measure_gradient_noise supports :central_checked and :sobel_checked; got $gradient_mode"))
+    nx, ny, nv = size(cube)
+    (nx >= 3 && ny >= 3) || throw(ArgumentError("cube needs at least 3 pixels per sky axis"))
+    n = 0
+    sx = sy = sxx = syy = sxy = 0.0
+    @inbounds for k in 1:nv, j in 2:(ny - 1), i in 2:(nx - 1)
+        if gradient_mode === :central_checked
+            gx = (cube[i - 1, j, k] - cube[i + 1, j, k]) / 2
+            gy = (cube[i, j - 1, k] - cube[i, j + 1, k]) / 2
+        else
+            gx = (cube[i - 1, j - 1, k] + 2 * cube[i - 1, j, k] + cube[i - 1, j + 1, k] -
+                  cube[i + 1, j - 1, k] - 2 * cube[i + 1, j, k] - cube[i + 1, j + 1, k]) / 8
+            gy = (cube[i - 1, j - 1, k] + 2 * cube[i, j - 1, k] + cube[i + 1, j - 1, k] -
+                  cube[i - 1, j + 1, k] - 2 * cube[i, j + 1, k] - cube[i + 1, j + 1, k]) / 8
+        end
+        (isfinite(gx) && isfinite(gy)) || continue
+        n += 1
+        sx += gx; sy += gy; sxx += gx * gx; syy += gy * gy; sxy += gx * gy
+    end
+    n >= 100 || throw(ArgumentError("only $n finite gradient samples; need at least 100"))
+    mx, my = sx / n, sy / n
+    cov = [sxx / n - mx^2, syy / n - my^2, sxy / n - mx * my]
+    A, dir = gradient_anisotropy(cov)
+    return (; cov, sigma_x=sqrt(cov[1]), sigma_y=sqrt(cov[2]), anisotropy=A, direction_deg=dir, n)
+end
+
+"""
+    gradient_anisotropy(cov) -> (A, direction_deg)
+
+Anisotropy `A = |sum g^2 e^(2i theta)| / sum g^2 = hypot(sxx - syy, 2 sxy) / (sxx + syy)`
+and preferred direction `0.5 atan(2 sxy, sxx - syy)` (degrees) of a gradient
+covariance `[sxx, syy, sxy]`.
+"""
+function gradient_anisotropy(cov::AbstractVector{<:Real})
+    sxx, syy, sxy = cov
+    return hypot(sxx - syy, 2sxy) / (sxx + syy), rad2deg(0.5 * atan(2sxy, sxx - syy))
+end
+
+# Whitening matrices for covariance [sxx, syy, sxy]. With C_n = C / sqrt(det C)
+# (unit determinant): S = C_n^(1/2) = (C_n + I) / sqrt(tr C_n + 2) and
+# W = C_n^(-1/2) = S^(-1) = [[s22, -s12], [-s12, s11]] since det S = 1.
+_gradient_whitening(cov::AbstractVector{<:Real}) = _gradient_whitening(cov[1], cov[2], cov[3])
+
+function _gradient_whitening(sxx::Real, syy::Real, sxy::Real)
+    sxx, syy, sxy = Float64(sxx), Float64(syy), Float64(sxy)
+    d = sqrt(sxx * syy - sxy^2)
+    axx, ayy, axy = sxx / d, syy / d, sxy / d
+    norm = sqrt(axx + ayy + 2)
+    s11, s22, s12 = (axx + 1) / norm, (ayy + 1) / norm, axy / norm
+    return (; w11=s22, w22=s11, w12=-s12, s11, s22, s12)
+end
+
+@inline _whiten_gradient(m, gx, gy) = (m.w11 * gx + m.w12 * gy, m.w12 * gx + m.w22 * gy)
+
+# Map a whitened-frame axial angle back to the original frame with S = C_n^(1/2).
+@inline function _unwhiten_angle(m, θ)
+    c, s = cos(θ), sin(θ)
+    return atan(m.s12 * c + m.s22 * s, m.s11 * c + m.s12 * s)
+end
+
+# Per-pixel whitening matrices from a (nx, ny, 3) covariance map (sxx, syy, sxy).
+function _whitening_maps(covmap::AbstractArray{<:Real, 3})
+    size(covmap, 3) == 3 || throw(ArgumentError("covariance map needs 3 planes (sxx, syy, sxy); got $(size(covmap))"))
+    nx, ny, _ = size(covmap)
+    names = (:w11, :w12, :w22, :s11, :s12, :s22)
+    maps = NamedTuple{names}(ntuple(_ -> Matrix{Float64}(undef, nx, ny), 6))
+    @inbounds for j in 1:ny, i in 1:nx
+        sxx, syy, sxy = covmap[i, j, 1], covmap[i, j, 2], covmap[i, j, 3]
+        # No covariance (NaN, e.g. outside the survey coverage, where the map
+        # builder had no emission-free data): the whitened gradients there are
+        # NaN, so those pixels drop out instead of being used unwhitened.
+        if !(isfinite(sxx) && isfinite(syy) && isfinite(sxy))
+            for n in names
+                maps[n][i, j] = NaN
+            end
+            continue
+        end
+        (sxx > 0 && syy > 0 && sxx * syy - sxy^2 > 0) ||
+            throw(ArgumentError("covariance map must be positive definite wherever it is finite; failed at ($i, $j): [$sxx, $syy, $sxy]"))
+        m = _gradient_whitening(sxx, syy, sxy)
+        for n in names
+            maps[n][i, j] = getfield(m, n)
+        end
+    end
+    return maps
+end
+
+@inline function _whiten_gradient_at(maps, i, j, gx, gy)
+    w11, w12, w22 = maps.w11[i, j], maps.w12[i, j], maps.w22[i, j]
+    return (w11 * gx + w12 * gy, w12 * gx + w22 * gy)
+end
+
+@inline function _unwhiten_angle_at(maps, i, j, θ)
+    c, s = cos(θ), sin(θ)
+    s11, s12, s22 = maps.s11[i, j], maps.s12[i, j], maps.s22[i, j]
+    return atan(s12 * c + s22 * s, s11 * c + s12 * s)
+end
+
+# NaN-aware (normalised) separable Gaussian smoothing with std `σ` pixels.
+function _nan_gaussian_smooth(a::AbstractMatrix{<:Real}, σ::Real)
+    σ > 0 || throw(ArgumentError("smoothing sigma must be > 0"))
+    r = max(1, ceil(Int, 4σ))
+    kern = [exp(-0.5 * (x / σ)^2) for x in -r:r]
+    nx, ny = size(a)
+    num = [isfinite(v) ? Float64(v) : 0.0 for v in a]
+    den = [isfinite(v) ? 1.0 : 0.0 for v in a]
+    function pass(x, dim)
+        out = zeros(nx, ny)
+        @inbounds if dim == 1
+            for j in 1:ny, i in 1:nx
+                acc = 0.0
+                for t in max(1, i - r):min(nx, i + r)
+                    acc += kern[t - i + r + 1] * x[t, j]
+                end
+                out[i, j] = acc
+            end
+        else
+            for j in 1:ny, i in 1:nx
+                acc = 0.0
+                for t in max(1, j - r):min(ny, j + r)
+                    acc += kern[t - j + r + 1] * x[i, t]
+                end
+                out[i, j] = acc
+            end
+        end
+        return out
+    end
+    num = pass(pass(num, 1), 2)
+    den = pass(pass(den, 1), 2)
+    return [d > 1e-6 ? n / d : NaN for (n, d) in zip(num, den)]
+end
+
+"""
+    gradient_noise_cov_map(cube; gradient_mode=:central_checked, fwhm_pixels=60) -> Array{Float64,3}
+
+Spatially varying gradient noise covariance for `gradient_noise_cov_file`: planes
+(sxx, syy, sxy) of shape (nx, ny, 3). Per pixel, the products gx^2, gy^2 and gx*gy
+of the gradients of the emission-free channels in `cube` (stencil of
+`gradient_mode`) are averaged over the channels, then smoothed with a NaN-aware
+Gaussian of the given FWHM in pixels (use about 3 x dn). Non-finite gradients are
+skipped. A larger FWHM gives a smoother, less noisy map; the noise anisotropy
+must vary slowly compared with it.
+"""
+function gradient_noise_cov_map(cube::AbstractArray{<:Real, 3};
+                                gradient_mode::Symbol=:central_checked,
+                                fwhm_pixels::Real=60)
+    gradient_mode in (:central_checked, :sobel_checked) ||
+        throw(ArgumentError("gradient_noise_cov_map supports :central_checked and :sobel_checked; got $gradient_mode"))
+    fwhm_pixels > 0 || throw(ArgumentError("fwhm_pixels must be > 0"))
+    nx, ny, nv = size(cube)
+    (nx >= 3 && ny >= 3) || throw(ArgumentError("cube needs at least 3 pixels per sky axis"))
+    sums = zeros(nx, ny, 3)
+    counts = zeros(nx, ny)
+    @inbounds for k in 1:nv, j in 2:(ny - 1), i in 2:(nx - 1)
+        if gradient_mode === :central_checked
+            gx = (cube[i - 1, j, k] - cube[i + 1, j, k]) / 2
+            gy = (cube[i, j - 1, k] - cube[i, j + 1, k]) / 2
+        else
+            gx = (cube[i - 1, j - 1, k] + 2 * cube[i - 1, j, k] + cube[i - 1, j + 1, k] -
+                  cube[i + 1, j - 1, k] - 2 * cube[i + 1, j, k] - cube[i + 1, j + 1, k]) / 8
+            gy = (cube[i - 1, j - 1, k] + 2 * cube[i, j - 1, k] + cube[i + 1, j - 1, k] -
+                  cube[i - 1, j + 1, k] - 2 * cube[i, j + 1, k] - cube[i + 1, j + 1, k]) / 8
+        end
+        (isfinite(gx) && isfinite(gy)) || continue
+        sums[i, j, 1] += gx * gx; sums[i, j, 2] += gy * gy; sums[i, j, 3] += gx * gy
+        counts[i, j] += 1
+    end
+    σ = fwhm_pixels / (2 * sqrt(2 * log(2)))
+    out = Array{Float64}(undef, nx, ny, 3)
+    for p in 1:3
+        plane = [counts[i, j] > 0 ? sums[i, j, p] / counts[i, j] : NaN for i in 1:nx, j in 1:ny]
+        out[:, :, p] = _nan_gaussian_smooth(plane, σ)
+    end
+    return out
+end
+
+read_gradient_noise_cov_map(path::AbstractString) = Float64.(read_fits_image(path))
+
+"Write a `gradient_noise_cov_map` result as a 3-plane FITS cube (planes: sxx, syy, sxy)."
+function write_gradient_noise_cov_map(path::AbstractString, covmap::AbstractArray{<:Real, 3};
+                                      gradient_mode::Symbol=:central_checked, fwhm_pixels::Real=60)
+    header = FITSHeader(["PLANE1", "PLANE2", "PLANE3", "GRADMODE", "SMOOTHFW"],
+                        ["sxx", "syy", "sxy", String(gradient_mode), Float64(fwhm_pixels)],
+                        ["gx*gx", "gy*gy", "gx*gy", "gradient stencil", "smoothing FWHM in pixels"])
+    return write_fits(path, covmap; header=header)
+end

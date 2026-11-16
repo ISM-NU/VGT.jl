@@ -132,6 +132,9 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                rbar2_weight::Bool=false,
                                rbar2_gate::Float64=0.0,
                                gradient_mode::Symbol=:central_checked,
+                               gradient_whiten::Bool=false,
+                               gradient_noise_cov::AbstractVector{<:Real}=Float64[],
+                               gradient_noise_cov_map=nothing,
                                weight_cube=nothing)
     # This is the science kernel. It returns Q/U maps accumulated over channels.
     # The final magnetic-field angle is computed later from these maps.
@@ -146,6 +149,18 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
+    _validate_gradient_whiten(gradient_whiten, gradient_noise_cov,
+                              gradient_noise_cov_map === nothing ? "" : "<map>", gradient_mode)
+    gradient_noise_cov_map === nothing || size(gradient_noise_cov_map) == (nx, ny, 3) ||
+        throw(ArgumentError("gradient_noise_cov_map size $(size(gradient_noise_cov_map)) must be ($nx, $ny, 3)"))
+    # Whitening maps each gradient by W = C^(-1/2) (C scaled to unit determinant),
+    # so noise gradients with covariance C become isotropic; the fitted window
+    # angle is mapped back with S = C^(1/2). Skipped when off, so the default
+    # output is unchanged.
+    whiten_maps = (gradient_whiten && gradient_noise_cov_map !== nothing) ?
+                  _whitening_maps(gradient_noise_cov_map) : nothing
+    whiten_w = (gradient_whiten && gradient_noise_cov_map === nothing) ?
+               _gradient_whitening(gradient_noise_cov) : nothing
 
     # q_accum and u_accum store orientation information. We use cos(2*angle) and
     # sin(2*angle) because field orientations are axial: angle and angle + pi
@@ -222,8 +237,15 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 down_ok = mask_image[i, j - 1] >= (scalar_noise ? noise : noise[i, j - 1, channel])
                 up_ok = mask_image[i, j + 1] >= (scalar_noise ? noise : noise[i, j + 1, channel])
                 if center_ok && left_ok && right_ok && down_ok && up_ok
-                    grad_x[i, j] = (channel_image[i - 1, j] - channel_image[i + 1, j]) / 2
-                    grad_y[i, j] = (channel_image[i, j - 1] - channel_image[i, j + 1]) / 2
+                    gx = (channel_image[i - 1, j] - channel_image[i + 1, j]) / 2
+                    gy = (channel_image[i, j - 1] - channel_image[i, j + 1]) / 2
+                    if whiten_maps !== nothing
+                        gx, gy = _whiten_gradient_at(whiten_maps, i, j, gx, gy)
+                    elseif whiten_w !== nothing
+                        gx, gy = _whiten_gradient(whiten_w, gx, gy)
+                    end
+                    grad_x[i, j] = gx
+                    grad_y[i, j] = gy
                 else
                     grad_x[i, j] = NaN
                     grad_y[i, j] = NaN
@@ -243,14 +265,21 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                     end
                 end
                 if valid_stencil
-                    grad_x[i, j] = (
+                    gx = (
                         channel_image[i - 1, j - 1] + 2 * channel_image[i - 1, j] + channel_image[i - 1, j + 1] -
                         channel_image[i + 1, j - 1] - 2 * channel_image[i + 1, j] - channel_image[i + 1, j + 1]
                     ) / 8
-                    grad_y[i, j] = (
+                    gy = (
                         channel_image[i - 1, j - 1] + 2 * channel_image[i, j - 1] + channel_image[i + 1, j - 1] -
                         channel_image[i - 1, j + 1] - 2 * channel_image[i, j + 1] - channel_image[i + 1, j + 1]
                     ) / 8
+                    if whiten_maps !== nothing
+                        gx, gy = _whiten_gradient_at(whiten_maps, i, j, gx, gy)
+                    elseif whiten_w !== nothing
+                        gx, gy = _whiten_gradient(whiten_w, gx, gy)
+                    end
+                    grad_x[i, j] = gx
+                    grad_y[i, j] = gy
                 else
                     grad_x[i, j] = NaN
                     grad_y[i, j] = NaN
@@ -310,6 +339,11 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 end
 
                 fit_angle = result.angle
+                if whiten_maps !== nothing
+                    fit_angle = _unwhiten_angle_at(whiten_maps, ii, jj, fit_angle)
+                elseif whiten_w !== nothing
+                    fit_angle = _unwhiten_angle(whiten_w, fit_angle)
+                end
                 intensity_weight = Float64(mask_image[ii, jj])
                 if collect_profile
                     _accumulate_weighted_diagnostic!(fit_rbar2_num, fit_rbar2_w, ii, jj, result.rbar2, intensity_weight)
@@ -319,7 +353,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 end
 
                 passes_rbar2_gate = rbar2_gate <= 0.0 || (isfinite(result.rbar2) && result.rbar2 >= rbar2_gate)
-                if result.fit_ok && passes_rbar2_gate
+                # isfinite: a window centre without a noise covariance (whitening map NaN there) is not used.
+                if result.fit_ok && isfinite(fit_angle) && passes_rbar2_gate
                     stokes_weight = (rbar2_weight && isfinite(result.rbar2)) ? intensity_weight * result.rbar2 : intensity_weight
                     # Accumulate the fitted gradient orientation into Q/U.
                     # The raw gradient is later rotated by 90 degrees to become
@@ -373,6 +408,9 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                       rbar2_weight::Bool=false,
                       rbar2_gate::Float64=0.0,
                       gradient_mode::Symbol=:central_checked,
+                      gradient_whiten::Bool=false,
+                      gradient_noise_cov::AbstractVector{<:Real}=Float64[],
+                      gradient_noise_cov_map=nothing,
                       weight_cube=nothing)
     # Public non-profiling VGT entry point used by tests and analysis scripts.
     q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
@@ -380,7 +418,10 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                                                 rbar2_weight=rbar2_weight,
                                                 rbar2_gate=rbar2_gate,
                                                 gradient_mode=gradient_mode,
-                                 weight_cube=weight_cube)
+                                                gradient_whiten=gradient_whiten,
+                                                gradient_noise_cov=gradient_noise_cov,
+                                                gradient_noise_cov_map=gradient_noise_cov_map,
+                                                weight_cube=weight_cube)
     return q_accum, u_accum
 end
 
@@ -389,6 +430,9 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                rbar2_weight::Bool=false,
                                rbar2_gate::Float64=0.0,
                                gradient_mode::Symbol=:central_checked,
+                               gradient_whiten::Bool=false,
+                               gradient_noise_cov::AbstractVector{<:Real}=Float64[],
+                               gradient_noise_cov_map=nothing,
                                weight_cube=nothing)
     # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
     # counters that help evaluate fit quality across the sky.
@@ -397,6 +441,9 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                  rbar2_weight=rbar2_weight,
                                  rbar2_gate=rbar2_gate,
                                  gradient_mode=gradient_mode,
+                                 gradient_whiten=gradient_whiten,
+                                 gradient_noise_cov=gradient_noise_cov,
+                                                gradient_noise_cov_map=gradient_noise_cov_map,
                                  weight_cube=weight_cube)
 end
 
@@ -455,6 +502,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
 
     f = FITS(cfg.input_file)
     fw = isempty(cfg.weight_file) ? nothing : FITS(cfg.weight_file)
+    fcov = (cfg.gradient_whiten && !isempty(cfg.gradient_noise_cov_file)) ? FITS(cfg.gradient_noise_cov_file) : nothing
     try
         pad = chunk_padding_pixels(cfg)
         py_start = max(1, y_start - pad)
@@ -462,6 +510,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
         # Only the selected channels are read (velocity_range_kms); nv is their count.
         length(channels) == nv || throw(ArgumentError("channels ($(length(channels))) must have nv=$nv entries"))
         sub_cube = read(f[1], :, py_start:py_end, channels)
+        sub_cov_map = fcov === nothing ? nothing : read(fcov[1], :, py_start:py_end, 1:3)
         sub_weight = fw === nothing ? nothing : read(fw[1], :, py_start:py_end, channels)
         resolved_noise_model = noise_model === nothing ? build_noise_model(
             weight_source(cfg),
@@ -484,6 +533,9 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
             rbar2_weight=cfg.rbar2_weight,
             rbar2_gate=cfg.rbar2_gate,
             gradient_mode=cfg.gradient_mode,
+            gradient_whiten=cfg.gradient_whiten,
+            gradient_noise_cov=cfg.gradient_noise_cov,
+            gradient_noise_cov_map=sub_cov_map,
             weight_cube=sub_weight,
         )
         diagnostics = (
@@ -521,5 +573,6 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
     finally
         close(f)
         fw === nothing || close(fw)
+        fcov === nothing || close(fcov)
     end
 end
