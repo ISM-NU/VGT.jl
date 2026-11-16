@@ -388,7 +388,7 @@ end
     small = VGT.choose_auto_execution(cfg, 30, 30, 10, 8, generous_budget)
     @test small.ny_chunks == 1
 
-    peak_one = VGT.estimate_peak_chunk_bytes(300, 50, cld(300, 10) + 20)
+    peak_one = VGT.estimate_peak_chunk_bytes(300, 50, cld(300, 10) + 2 * VGT.chunk_padding_pixels(cfg))
     memory_limited = VGT.choose_auto_execution(cfg, 300, 300, 50, 8, peak_one)
     @test memory_limited.ny_chunks == 10
 

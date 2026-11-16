@@ -296,9 +296,13 @@ function validate_static_config(cfg::VGTConfig)
 end
 
 function chunk_padding_pixels(cfg::VGTConfig)
-    # Half-window padding is the exact context required by the current dn x dn
-    # local VGT window. Final smoothing is applied only after chunk stitching.
-    return div(cfg.dn, 2)
+    # Rows a chunk reads beyond its own: a window centred on row j covers rows
+    # j - dn/2 + 1 .. j + dn/2, and the central and Sobel stencils need one more
+    # row on each side of a gradient (the backward difference only the row
+    # before, which the window's first row already has). One row less made the
+    # last window rows of every chunk NaN, so results depended on ny_chunks
+    # (test/chunk_seams.jl). Final smoothing is applied only after stitching.
+    return div(cfg.dn, 2) + (cfg.gradient_mode === :nan_edge_backward ? 0 : 1)
 end
 
 function choose_auto_threads(cpu_threads::Int)
@@ -307,7 +311,7 @@ end
 
 function choose_auto_chunks(ny::Int, dn::Int, n_threads::Int)
     target = min(max(1, 2 * n_threads), 32)
-    # dn is the correctness floor (process_chunk pads by dn/2 on each side);
+    # dn is the correctness floor (process_chunk pads by chunk_padding_pixels on each side);
     # The quality floor of 32 avoids pathologically thin strips.
     min_chunk_height = max(dn, 32)
     max_reasonable = max(1, cld(ny, min_chunk_height))

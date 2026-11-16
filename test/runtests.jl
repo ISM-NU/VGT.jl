@@ -15,4 +15,5 @@ using Test
     include("main_entry.jl")
     include("regrid.jl")
     include("pipeline_fit_diagnostics.jl")
+    include("chunk_seams.jl")
 end
