@@ -116,7 +116,7 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         String(weight_file),
         normalize_angle_frame(angle_frame),
         Int(output_bin),
-        Float64.(collect(velocity_range_kms)),
+        collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
     )
 end
 
@@ -167,7 +167,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         String(weight_file),
         normalize_angle_frame(angle_frame),
         Int(output_bin),
-        Float64.(collect(velocity_range_kms)),
+        collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
     )
 end
 

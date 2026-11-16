@@ -77,5 +77,10 @@ using Test
             ny_chunks = 1
             """)
         @test load_config(toml).velocity_range_kms == [3.0, 7.0]
+        # TOML parses `[]` as Vector{Any}; this once recursed in the positional constructor until the stack overflowed.
+        write(toml, replace(read(toml, String), "velocity_range_kms = [3, 7]" => "velocity_range_kms = []"))
+        @test load_config(toml).velocity_range_kms == Float64[]
+        @test VGTConfig(input_file="c.fits", noise=1.0, dn=4, ker=1, min_valid=4, velocity_range_kms=Any[]).velocity_range_kms ==
+              Float64[]
     end
 end
