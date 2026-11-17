@@ -51,7 +51,19 @@ using VGT
 #   rho_g (computed the same way on the target cube): per 20 px block, rho_g^2 = <|g|^2> / <2 sigma_g^2> - 1
 #     over masked-in pixels of the window's channels, sigma_g from the injected noise.
 #
-#   julia -t 16 --project=. scripts/validate_faint_gas.jl --cats DIR --out DIR [--nseed 3]
+#   Added 2026-11-17 (branch lowpass-prefilter), declared before any lp run: variant lp, a beam-scaled isotropic
+#     low-pass of each channel before the gradients (mask and Stokes weights on the raw channel, as pre4). Radial in |k|
+#     (cycles/px): pass 1 where the beam's power transfer exp(-4 pi^2 s^2 k^2) is >= 10 %, zero where it is <= 2 %,
+#     raised-cosine taper between; for the 3 px beam (s = 1.274 px) k1 = 0.190, k2 = 0.247 cycles/px. Why it differs
+#     from pre4: pre4 (Gaussian FWHM 4 px) attenuates the sky inside the beam's passband (amplitude 0.57 at k = 0.1, 0.28
+#     at 0.15), while lp passes every k below k1 unchanged and removes only scales the beam has already suppressed;
+#     its use is against instrument patterns above the beam cutoff (GALFA scan pattern, LMC-foreground
+#     scripts/galfa_6c_lowpass.py). Question here: is lp free on clean data? Units: the 4 sims (lines of sight 2 and
+#     3 pooled within a sim), paired lp - plain, bootstrap over sims then 32 px blocks
+#     (scripts/figures/lowpass_summary.py). Rule: "free" if, at 10' for both layers, dAM at S/N 23 and 46 is >= -0.005
+#     or within 2 sigma of 0, and dAM pooled over the five S/N levels (sims x S/N as units) is not below 0 by more than
+#     2 sigma; otherwise "costs". Run with --variants plain,lp.
+#   julia -t 16 --project=. scripts/validate_faint_gas.jl --cats DIR --out DIR [--nseed 3] [--variants plain,lp]
 #       [--runs b.1p.32,b.1p1,b1p.32,b1p1] [--los 2,3] [--snr 8,12,16,23,46] [--maps 1] [--scan 1]
 #   --scan 1 prints rho_g and mask coverage per layer and S/N only (no VGT).
 
@@ -64,11 +76,26 @@ const KER = 4
 const S10 = 15.0
 const S120 = 180.0
 const BLOCK = 32
-const VARIANTS = ("plain", "amp2", "pre4", "amp2pre4")
+const ALL_VARIANTS = ("plain", "amp2", "pre4", "amp2pre4", "lp")
+VARIANTS = ("plain", "amp2", "pre4", "amp2pre4")
+
+# Beam-scaled radial low-pass (variant lp, see the header): the |k| where the beam's power transfer is B.
+lp_cut(beam, B) = sqrt(log(1 / B)) / (2pi * beam / sqrt(8log(2)))
+
+function lowpass!(cube::AbstractArray{<:Real, 3}, beam)
+    k1, k2 = lp_cut(beam, 0.10), lp_cut(beam, 0.02)
+    kx, ky = fftfreq(size(cube, 1)), fftfreq(size(cube, 2))
+    t = [begin k = hypot(x, y); k <= k1 ? 1.0 : k >= k2 ? 0.0 : 0.5 * (1 + cos(pi * (k - k1) / (k2 - k1))) end
+         for x in kx, y in ky]
+    for c in 1:size(cube, 3)
+        cube[:, :, c] .= real.(ifft(fft(cube[:, :, c]) .* t))
+    end
+    return cube
+end
 
 function opts_from(args)
     o = Dict("runs" => "b.1p.32,b.1p1,b1p.32,b1p1", "los" => "2,3", "snr" => "8,12,16,23,46", "nseed" => "3",
-             "nv" => "48", "maps" => "1", "scan" => "0")
+             "nv" => "48", "maps" => "1", "scan" => "0", "variants" => "plain,amp2,pre4,amp2pre4")
     i = 1
     while i <= length(args)
         o[args[i][3:end]] = args[i + 1]
@@ -151,6 +178,13 @@ end
 
 function main(args)
     o = opts_from(args)
+    global VARIANTS = Tuple(String.(split(o["variants"], ",")))
+    all(v in ALL_VARIANTS for v in VARIANTS) && VARIANTS[1] == "plain" ||
+        throw(ArgumentError("--variants must start with plain and use $(ALL_VARIANTS)"))
+    let n = 64, w = [cos(2pi * k * i / n) for i in 0:n-1, j in 0:n-1, k in (12, 16)]
+        a = lowpass!(copy(w), BEAM)   # self-check: 12/64 = 0.19 passes, 16/64 = 0.25 is removed
+        @info "lowpass self-check" pass_0p19=round(std(a[:, :, 1]) / std(w[:, :, 1]); digits=4) pass_0p25=round(std(a[:, :, 2]) / std(w[:, :, 2]); digits=4)
+    end
     out = o["out"]
     mkpath(joinpath(out, "maps"))
     runs = split(o["runs"], ",")
@@ -209,13 +243,15 @@ function main(args)
                     end
                     continue
                 end
-                cube_f = beam!(copy(cube), PREFILTER)
+                cube_f = any(v -> v in ("pre4", "amp2pre4"), VARIANTS) ? beam!(copy(cube), PREFILTER) : cube
+                cube_lp = "lp" in VARIANTS ? lowpass!(copy(cube), BEAM) : cube
                 key = (run, los, snr, seed)
                 psis = Dict{Tuple{String, Int}, Matrix{Float64}}()
                 cols = Dict{Int, Matrix{Float64}}()
                 for variant in VARIANTS, k in k0s
                     raw = cube[:, :, k:k+3]
-                    grad = variant in ("pre4", "amp2pre4") ? cube_f[:, :, k:k+3] : raw
+                    grad = variant in ("pre4", "amp2pre4") ? cube_f[:, :, k:k+3] :
+                           variant == "lp" ? cube_lp[:, :, k:k+3] : raw
                     psis[(variant, k)], cols[k] = window_psi(raw, grad, sigma, variant)
                 end
                 for k in k0s

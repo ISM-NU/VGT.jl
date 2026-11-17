@@ -104,7 +104,9 @@ These score VGT against a known field instead of starlight.
   scored as a two-scale foreground template (10' and 120' equivalents) against
   the velocity-resolved true field; `--scan 1` prints only the gradient S/N
   `rho_g` per S/N level. `figures/faint_gas_summary.py` applies the declared
-  pass rule. Results in `docs/validation-faint-gas.md`.
+  pass rule. Results in `docs/validation-faint-gas.md`. `--variants plain,lp` runs
+  the beam-scaled low-pass before the gradients (rule in the header);
+  `figures/lowpass_summary.py` scores it with the sims as units.
 
 `score_vgt_vs_true.jl`
 : Scores VGT angle maps against `psi_true.fits`: alignment measure
