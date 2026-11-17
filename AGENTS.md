@@ -14,7 +14,8 @@ Primary science outputs:
 - `psi_fit_rbar2_*.fits` - fitter-level doubled-angle coherence diagnostic.
 - `psi_support_*.fits` - fraction of velocity channels with successful local
   VGT fits per sky pixel.
-- `psi_plot_*.png` and `run_metadata.toml` - quick-look plot and run provenance.
+- `psi_plot_*.png` and `run_metadata.toml` - quick-look plot (skipped for an
+  all-NaN map) and run provenance.
 
 Primary local data locations:
 

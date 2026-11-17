@@ -284,7 +284,8 @@ default. Each run contains:
 - `psi_fit_rbar2_<input-stem>.fits`: doubled-angle resultant coherence
 - `psi_support_<input-stem>.fits`: fraction of velocity channels contributing
   successful local fits per sky pixel
-- `psi_plot_<input-stem>.png`: quick-look image of the result
+- `psi_plot_<input-stem>.png`: quick-look image of the result (skipped with a
+  warning when the angle map has no finite pixel)
 - `run_metadata.toml`: run configuration, diagnostics, product paths, and
   DrWatson git provenance for the output bundle
 

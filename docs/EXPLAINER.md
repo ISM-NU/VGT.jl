@@ -318,7 +318,7 @@ By default, results are saved in a parameter-named directory under
 | `psi_reliability_<input-stem>.fits` | Stokes coherence/reliability map |
 | `psi_fit_rbar2_<input-stem>.fits` | Fitter coherence diagnostic |
 | `psi_support_<input-stem>.fits` | Fraction of velocity channels with successful local fits |
-| `psi_plot_<input-stem>.png` | Quick-look color image of the angle map |
+| `psi_plot_<input-stem>.png` | Quick-look color image of the angle map (not written when the map has no finite pixel) |
 
 ---
 
