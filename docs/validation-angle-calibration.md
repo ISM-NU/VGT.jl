@@ -1,9 +1,9 @@
 # Angle calibration of the gradient stencils: synthetic validation
 
-Status: validation evidence (2026-11-17). Answer: no VGT angle bias above
+Status: validation evidence (2026-11-17), independently reviewed; corrections applied. Answer: no VGT angle bias above
 1 deg is shown; the default stencil adds a grid-locked term of up to +0.85 deg,
-which `isotropic_checked` removes; steep-spectrum fields show a further term of
-about -0.9 deg of unknown source. Synthetic data only. Scripts:
+which `isotropic_checked` removes; the extra -0.9 deg term of k^-11/3 fields is
+an artefact of the generator's low-k modes (gone when they are cut). Synthetic data only. Scripts:
 `scripts/validate_angle_bias.jl` (runs), `scripts/summarize_angle_bias.py`
 (harmonic fits); unit tests in `test/angle_calibration.jl`.
 
@@ -19,11 +19,15 @@ systematic of that size would matter.
 - The kernel (stencil, intensity mask, window fit, Q/U smoothing) is
   equivariant under the square grid's mirrors: a transposed cube returns
   90 deg minus the angle to 1e-8 deg, and a cube flipped along axis 1 returns
-  minus the angle (exact with uniform Stokes weights; the default weight is the
-  window's own pixel, half a pixel off the even window's centre, which shifts
-  position, not angle). So VGT.jl has no uniform angle offset. Any bias is
-  locked to the grid, odd and 90-deg periodic in the field angle t (counter-
-  clockwise from +axis 1): b(t) = A4 sin 4t + A8 sin 8t + ...
+  minus the angle. The transpose test is exact with the default weights, so
+  VGT.jl has no uniform angle offset. The flip test is exact only with uniform
+  Stokes weights (the default weight is the window's own pixel, half a pixel
+  off the even window's centre, which shifts position, not angle), so the
+  90-deg period rests on it with that caveat. Any bias is therefore locked to
+  the grid, odd and 90-deg periodic in the field angle t (counter-clockwise
+  from +axis 1): b(t) = A4 sin 4t + A8 sin 8t + ... Symmetry breakers on the
+  input side (an elliptical beam, a reprojection, striped noise) are outside
+  VGT.jl and can add terms this note does not cover.
 - The axial von Mises fitter (doubled-angle mean of unit vectors) is rotation
   equivariant; isotropic noise dilutes the window coherence but does not rotate it.
 - The stencil is the grid-locked term. On a plane wave of wavenumber k
@@ -99,13 +103,22 @@ lower bounds. A8 is at most 0.16 deg.
 
 With k^-11/3 every stencil has an extra grid-locked term of about -0.9 deg
 (central -0.76 ± 0.24, isotropic -1.05 ± 0.24, 17 seeds) on top of the paired
-stencil difference (+0.30): towards the axes, opposite to the stencil term. Its
-source is not identified. Candidates: the square VGT window (D4-symmetric but
-not isotropic, which matters when the gradient field changes across a window,
-as it does for steep spectra), or the random-field generator, whose few
-low-k lattice modes have quantised directions. Running the same fields at
-1024^2 (the generator candidate) and at dn 10 and 40 (the window candidate)
-would separate them; not done.
+stencil difference (+0.30), towards the axes. Cause: the random-field generator.
+On a 512^2 lattice the few lowest modes have quantised directions, and a steep
+spectrum puts most of its gradient power in them. The check declared above was
+run with modes |k| < 2 pi/32 zeroed (`--lowk-cut 32`, same 17 seeds, jobs on
+the cluster; seeds 1-4, 8, 11-22):
+
+| k^-11/3, r = 2 | central A4 | Sobel A4 | isotropic A4 | central - isotropic (paired) |
+|---|---|---|---|---|
+| all modes (17 seeds) | -0.756 ± 0.235 | -1.197 ± 0.239 | -1.052 ± 0.238 | +0.295 ± 0.006 |
+| modes below 2 pi/32 zeroed (17 seeds) | +0.469 ± 0.069 | -0.327 ± 0.070 | -0.061 ± 0.070 | +0.530 ± 0.004 |
+
+The prediction held: isotropic A4 is -0.06 ± 0.07 (zero) and central +0.47 ± 0.07,
+inside the expected +0.3 to +0.85; c0 and B4 are zero within errors, A8 below
+0.01. The term is not a property of VGT, the window or the stencil, so it is
+not a bias to calibrate. The k^-11/3 rows without the cut describe the
+generator, not VGT; the paired stencil term (now +0.53) is what applies.
 
 CATS b1p1, deg:
 
@@ -121,14 +134,16 @@ Reading:
   of +0.30 to +0.85 deg (paired against `isotropic_checked` on the same cubes)
   and +0.12 deg on the noiseless CATS cube. The absolute A4 of the default is
   +0.59 to +0.89 deg on the k^-8/3 random fields, -0.76 ± 0.24 deg on the
-  k^-11/3 fields (see the extra term above) and +0.19 deg on CATS: below 1 deg
+  k^-11/3 fields (generator artefact, +0.47 ± 0.07 with the low-k modes cut) and +0.19 deg on CATS (diluted: the
+  disk's field angles are fixed and have <cos 4 phi> of their own, so the
+  noiseless cube also fits B4 = -0.082 ± 0.003 and the amplitude is 0.20): below 1 deg
   in every case with power. CATS at S/N 8 (AM 0.32) has no power. The stencil
   term follows the wavenumbers that carry the gradients: steeper spectra and
   CATS have less beam-scale power, and noise dilutes it (r = 1: paired +0.50).
 - `isotropic_checked` removes the stencil term: A4 = -0.02 to +0.09 deg on the
   k^-8/3 fields and +0.06 on CATS, at the same alignment (AM equal to
-  0.001-0.003). It does not remove the extra term of the k^-11/3 fields, where
-  its total (-1.05 ± 0.24) is larger in size than the default's.
+  0.001-0.003), and -0.06 ± 0.07 on the k^-11/3 fields with the generator's
+  low-k modes cut.
   `sobel_checked` overshoots to the other side (-0.16 to -0.47 deg), as the
   plane-wave expansion predicts (half the central term, opposite sign).
 - The window size does not matter (dn 10, 20, 40: paired +0.74, +0.77, +0.84).
@@ -139,10 +154,10 @@ Reading:
 - Decision: no bias above 1 deg is shown, so the default stays
   `central_checked`. `isotropic_checked` is an opt-in comparison mode for
   analyses where the stencil term matters (a field running near 22.5 deg mod 45
-  to the pixel grid over the whole map, where it does not average out); because
-  of the unexplained steep-spectrum term it is not shown to lower the total bias
-  in every case.
+  to the pixel grid over the whole map, where it does not average out). The
+  -0.9 deg term of the uncut k^-11/3 fields comes from the generator, so it does
+  not weigh against the new stencil.
 
-Not done: the source of the steep-spectrum term (above), other CATS runs (sub-Alfvenic, subsonic), other beams than 3 px, a
+Not done: other CATS runs (sub-Alfvenic, subsonic), other beams than 3 px, a
 direct test on observed data with an independent field tracer (that belongs in
 the experiment repositories).
