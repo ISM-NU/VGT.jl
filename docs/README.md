@@ -15,6 +15,9 @@ evidence, or reference).
 - `validation-gradient-whitening.md` — synthetic test of opt-in gradient
   whitening against correlated, anisotropic noise (and the rejected gradient
   S/N mask). Validation evidence.
+- `validation-faint-gas.md` — CATS test of faint-gas VGT variants (opt-in
+  `gradient_weight = "amplitude2"`, channel pre-filter) at the gradient S/N of
+  faint foreground layers. Validation evidence.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.

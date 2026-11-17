@@ -4,6 +4,8 @@
 # such as window size, noise model, fitter mode, and masking policy.
 
 const ANGLE_FRAMES = (:pixel, :galactic, :icrs)
+# gradient_weight options (window fit, src/science/fitters.jl).
+const GRADIENT_WEIGHT_MODES = (:unit, :amplitude2)
 
 function normalize_angle_frame(value)
     frame = _symbol_config_value(value)
@@ -57,6 +59,12 @@ struct VGTConfig
     # the map: FITS cube (nx, ny, 3) of (sxx, syy, sxy) on the input's sky grid,
     # used per pixel (see `gradient_noise_cov_map`). Exclusive with the constant.
     gradient_noise_cov_file::String
+    # Weight of each gradient's doubled angle in the window fit: :unit (default,
+    # every valid gradient counts once) or :amplitude2 (|g|^2, the structure
+    # tensor; inverse-variance weighting under isotropic noise, see
+    # docs/validation-faint-gas.md). Under anisotropic noise combine with
+    # gradient_whiten.
+    gradient_weight::Symbol
 
     function VGTConfig(input_file::String, output_dir::String,
                        keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
@@ -75,7 +83,8 @@ struct VGTConfig
                        velocity_range_kms::Vector{Float64}=Float64[],
                        gradient_whiten::Bool=false,
                        gradient_noise_cov::Vector{Float64}=Float64[],
-                       gradient_noise_cov_file::String="")
+                       gradient_noise_cov_file::String="",
+                       gradient_weight::Symbol=:unit)
         # Validate here so invalid science settings fail before a large FITS
         # cube run starts.
         _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
@@ -83,6 +92,8 @@ struct VGTConfig
                                 noise_sigma_multiplier, zero_stokes_policy,
                                 output_support_mode, gradient_mode, rbar2_gate,
                                 gradient_whiten, gradient_noise_cov, gradient_noise_cov_file)
+        gradient_weight in GRADIENT_WEIGHT_MODES ||
+            throw(ArgumentError("gradient_weight must be one of $(join(GRADIENT_WEIGHT_MODES, ", ")); got $(gradient_weight)"))
         angle_frame in ANGLE_FRAMES ||
             throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
         output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(output_bin)"))
@@ -95,7 +106,7 @@ struct VGTConfig
                    noise_tile_size, zero_stokes_policy, output_support_mode,
                    gradient_mode, noise_sigma_multiplier,
                    rbar2_gate, weight_file, angle_frame, output_bin, velocity_range_kms,
-                   gradient_whiten, gradient_noise_cov, gradient_noise_cov_file)
+                   gradient_whiten, gradient_noise_cov, gradient_noise_cov_file, gradient_weight)
     end
 end
 
@@ -115,7 +126,8 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
                    velocity_range_kms=Float64[],
                    gradient_whiten=false,
                    gradient_noise_cov=Float64[],
-                   gradient_noise_cov_file="")
+                   gradient_noise_cov_file="",
+                   gradient_weight=:unit)
     return VGTConfig(
         String(input_file),
         String(output_dir),
@@ -141,6 +153,7 @@ function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
         Bool(gradient_whiten),
         collect(Float64, gradient_noise_cov),
         String(gradient_noise_cov_file),
+        _symbol_config_value(gradient_weight),
     )
 end
 
@@ -162,6 +175,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
                    gradient_whiten=false,
                    gradient_noise_cov=Float64[],
                    gradient_noise_cov_file="",
+                   gradient_weight=:unit,
                    # Removed in 0.1.0; only the old default value is tolerated.
                    finalize_mask_mode=nothing,
                    histogram_edge_mode=nothing,
@@ -198,6 +212,7 @@ function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="sub
         Bool(gradient_whiten),
         collect(Float64, gradient_noise_cov),
         String(gradient_noise_cov_file),
+        _symbol_config_value(gradient_weight),
     )
 end
 
@@ -447,7 +462,7 @@ const VGT_CONFIG_TABLE_KEYS = Dict(
     "vgt" => Set([
         "dn", "ker", "min_valid", "fitter_mode",
         "zero_stokes_policy", "output_support_mode", "gradient_mode",
-        "rbar2_weight", "rbar2_gate", "angle_frame", "output_bin",
+        "rbar2_weight", "rbar2_gate", "angle_frame", "output_bin", "gradient_weight",
         "finalize_mask_mode", "histogram_edge_mode", "gradient_sample_mode",  # obsolete
     ]),
     "execution" => Set(["ny_chunks"]),
@@ -520,6 +535,7 @@ function load_config(path::AbstractString="config.toml")
         gradient_whiten=Bool(_config_key_or(cfg, "gradient_whiten", false)),
         gradient_noise_cov=collect(Float64, _config_key_or(cfg, "gradient_noise_cov", Float64[])),
         gradient_noise_cov_file=String(_config_key_or(cfg, "gradient_noise_cov_file", "")),
+        gradient_weight=_config_key_or(cfg, "gradient_weight", :unit),
         # Obsolete keys: the constructor accepts the old default with a
         # warning and rejects anything else.
         finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),

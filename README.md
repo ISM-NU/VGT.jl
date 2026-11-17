@@ -190,6 +190,7 @@ Runtime parameters live in `config.toml`. `config.example.toml` is the template 
 - `zero_stokes_policy`: whether zero Q/U support is converted to `NaN` before smoothing
 - `output_support_mode`: `"smoothed_stokes_support"` keeps the smoothed Q/U halo; `"direct_fit_support"` blanks pixels without direct fitted-window support
 - `gradient_mode`: `"central_checked"` by default; `"sobel_checked"` and `"nan_edge_backward"` (backward differences) for comparisons
+- `gradient_weight` (`[vgt]`, default `"unit"`): `"amplitude2"` weights each gradient by `|g|^2` in the window fit; see `docs/validation-faint-gas.md` before enabling
 - `rbar2_weight`, `rbar2_gate`: optional per-channel coherence weighting/gating; keep disabled unless a component-matched validation supports enabling them
 - `ny_chunks`: execution control; use `"auto"` to derive chunking from the current Julia thread count and cube geometry. Thread count is controlled when launching Julia with `--threads=N` or `JULIA_NUM_THREADS`.
 

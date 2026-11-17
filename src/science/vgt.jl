@@ -135,7 +135,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                gradient_whiten::Bool=false,
                                gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                                gradient_noise_cov_map=nothing,
-                               weight_cube=nothing)
+                               weight_cube=nothing,
+                               gradient_weight::Symbol=:unit)
     # This is the science kernel. It returns Q/U maps accumulated over channels.
     # The final magnetic-field angle is computed later from these maps.
     nx, ny, nv = size(cube)
@@ -147,6 +148,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
     dn <= ny || throw(ArgumentError("dn=$dn is too large for ny=$ny (need ny ≥ $dn)"))
     gradient_mode in (:central_checked, :sobel_checked, :nan_edge_backward) ||
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
+    gradient_weight in GRADIENT_WEIGHT_MODES ||
+        throw(ArgumentError("Unsupported gradient_weight=$gradient_weight; use one of $(GRADIENT_WEIGHT_MODES)"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
     _validate_gradient_whiten(gradient_whiten, gradient_noise_cov,
@@ -333,7 +336,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
 
             try
                 t_fit = collect_profile ? time_ns() : Int64(0)
-                result = fit_window_result(fitter_mode, grad_x_window, grad_y_window)
+                result = fit_window_result(fitter_mode, grad_x_window, grad_y_window; gradient_weight=gradient_weight)
                 if collect_profile
                     fit_ns_tls[tid] += time_ns() - t_fit
                 end
@@ -411,7 +414,8 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                       gradient_whiten::Bool=false,
                       gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                       gradient_noise_cov_map=nothing,
-                      weight_cube=nothing)
+                      weight_cube=nothing,
+                      gradient_weight::Symbol=:unit)
     # Public non-profiling VGT entry point used by tests and analysis scripts.
     q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
                                                 fitter_mode=fitter_mode, collect_profile=false,
@@ -421,7 +425,8 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                                                 gradient_whiten=gradient_whiten,
                                                 gradient_noise_cov=gradient_noise_cov,
                                                 gradient_noise_cov_map=gradient_noise_cov_map,
-                                                weight_cube=weight_cube)
+                                                weight_cube=weight_cube,
+                                                gradient_weight=gradient_weight)
     return q_accum, u_accum
 end
 
@@ -433,7 +438,8 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                gradient_whiten::Bool=false,
                                gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                                gradient_noise_cov_map=nothing,
-                               weight_cube=nothing)
+                               weight_cube=nothing,
+                               gradient_weight::Symbol=:unit)
     # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
     # counters that help evaluate fit quality across the sky.
     return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
@@ -443,8 +449,9 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                  gradient_mode=gradient_mode,
                                  gradient_whiten=gradient_whiten,
                                  gradient_noise_cov=gradient_noise_cov,
-                                                gradient_noise_cov_map=gradient_noise_cov_map,
-                                 weight_cube=weight_cube)
+                                 gradient_noise_cov_map=gradient_noise_cov_map,
+                                 weight_cube=weight_cube,
+                                 gradient_weight=gradient_weight)
 end
 
 function chunk_y_bounds(j::Int, ny::Int, ny_chunks::Int)
@@ -537,6 +544,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
             gradient_noise_cov=cfg.gradient_noise_cov,
             gradient_noise_cov_map=sub_cov_map,
             weight_cube=sub_weight,
+            gradient_weight=cfg.gradient_weight,
         )
         diagnostics = (
             fit_attempts=profile[:fit_attempts],

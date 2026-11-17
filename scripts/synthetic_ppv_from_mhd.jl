@@ -130,4 +130,5 @@ function main(args)
             "; beam ", fwhm, " px, noise ", sigma_n, "; wrote ", out)
 end
 
-main(ARGS)
+# Run only as a script, so validate_faint_gas.jl can include the generator functions.
+abspath(PROGRAM_FILE) == (@__FILE__) && main(ARGS)

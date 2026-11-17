@@ -63,6 +63,13 @@ ker = 4
 # Minimum valid above-threshold gradients required in a window before fitting.
 min_valid = 100
 
+# Weight of each gradient in the window fit. "unit" (default): every valid
+# gradient's doubled angle counts once. "amplitude2": weighted by |g|^2 (the
+# structure tensor), the inverse-variance weight of a gradient's angle under
+# isotropic noise. Combine with gradient_whiten when the noise is anisotropic.
+# See docs/validation-faint-gas.md before enabling.
+# gradient_weight = "unit"
+
 # Frame of the written psi map. "pixel": counter-clockwise from the image x-axis
 # (FITS axis 1), the frame VGT computes in. "galactic" or "icrs": IAU position
 # angle, east of north in that frame, converted per pixel through the cube's WCS

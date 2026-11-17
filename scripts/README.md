@@ -98,6 +98,14 @@ These score VGT against a known field instead of starlight.
 : Builds an optically thin 21 cm cube from an MHD snapshot (CATS) plus the true
   plane-of-sky field angle `psi_true`. Writes `ppv.fits` and `psi_true.fits`.
 
+`validate_faint_gas.jl`
+: Faint-gas VGT on CATS cubes with beam-correlated noise: plain VGT against
+  `gradient_weight = "amplitude2"` and a Gaussian pre-filter of the channels,
+  scored as a two-scale foreground template (10' and 120' equivalents) against
+  the velocity-resolved true field; `--scan 1` prints only the gradient S/N
+  `rho_g` per S/N level. `figures/faint_gas_summary.py` applies the declared
+  pass rule. Results in `docs/validation-faint-gas.md`.
+
 `score_vgt_vs_true.jl`
 : Scores VGT angle maps against `psi_true.fits`: alignment measure
   `AM = <cos 2 dpsi>` and median `|dpsi|` over pixels where both maps are finite.

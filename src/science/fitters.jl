@@ -135,11 +135,47 @@ function _axial_resultant_stats_paired(grad_x::AbstractArray, grad_y::AbstractAr
     return (; angle, rbar2, effective_n=n, resultant)
 end
 
-function fit_window_result(mode::Symbol, grad_x::AbstractArray, grad_y::AbstractArray)
+# Gradient-amplitude (inverse-variance) weighting, opt-in via gradient_weight =
+# :amplitude2. Each pair's doubled angle is weighted by |g|^2, so the sums are those
+# of the structure tensor: sum (gx^2 - gy^2) and sum 2 gx gy. With isotropic gradient
+# noise of variance s^2 per component, a gradient's doubled-angle variance is about
+# 2 s^2 / |G|^2 where it is signal dominated, so |g|^2 is its inverse-variance weight,
+# and the noise adds 2 s^2 to E|g|^2 but nothing to E(gx^2 - gy^2) or E(gx gy): the
+# angle is unbiased. Anisotropic noise does bias it (by the full covariance anisotropy,
+# twice the unit-weight pull), so combine with gradient_whiten there. rbar2 is the
+# weighted resultant length |sum w e^(2i theta)| / sum w; effective_n still counts pairs.
+function _axial_resultant_stats_paired_amp2(grad_x::AbstractArray, grad_y::AbstractArray)
+    s = 0.0
+    c = 0.0
+    wsum = 0.0
+    n = 0
+    @inbounds for idx in eachindex(grad_x, grad_y)
+        gx = Float64(grad_x[idx])
+        gy = Float64(grad_y[idx])
+        (isfinite(gx) && isfinite(gy)) || continue
+        c += gx * gx - gy * gy
+        s += 2.0 * gx * gy
+        wsum += gx * gx + gy * gy
+        n += 1
+    end
+    n == 0 && return (; angle=NaN, rbar2=NaN, effective_n=0, resultant=NaN)
+    resultant = hypot(s, c)
+    rbar2 = wsum > 0 ? resultant / wsum : NaN
+    angle = resultant <= sqrt(eps(Float64)) * max(wsum, 1.0) ? NaN : _wrap_axial_angle(0.5 * atan(s, c))
+    angle = isfinite(angle) ? angle : NaN
+    # resultant is reported on the unit-weight scale (rbar2 * n) so the degenerate test below matches.
+    return (; angle, rbar2, effective_n=n, resultant=isfinite(rbar2) ? rbar2 * n : 0.0)
+end
+
+function fit_window_result(mode::Symbol, grad_x::AbstractArray, grad_y::AbstractArray;
+                           gradient_weight::Symbol=:unit)
     # Central dispatcher used by the VGT kernel. It returns one consistent
     # WindowFitResult for the (single) supported fitter mode.
     mode === :axial_vonmises || throw(ArgumentError("Unsupported fitter_mode=$mode"))
-    stats = _axial_resultant_stats_paired(grad_x, grad_y)
+    gradient_weight in GRADIENT_WEIGHT_MODES ||
+        throw(ArgumentError("Unsupported gradient_weight=$gradient_weight; use one of $(GRADIENT_WEIGHT_MODES)"))
+    stats = gradient_weight === :unit ? _axial_resultant_stats_paired(grad_x, grad_y) :
+            _axial_resultant_stats_paired_amp2(grad_x, grad_y)
     stats.effective_n == 0 && return _failed_fit_result(:empty_sample)
     reason = stats.resultant <= sqrt(eps(Float64)) ? :degenerate_resultant : :fit_failed
     return _fit_result(stats.angle, stats; failure_reason=reason)

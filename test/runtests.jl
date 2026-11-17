@@ -13,6 +13,7 @@ using Test
     include("output_bin.jl")
     include("velocity_range.jl")
     include("gradient_whitening.jl")
+    include("gradient_weight.jl")
     include("main_entry.jl")
     include("regrid.jl")
     include("pipeline_fit_diagnostics.jl")
