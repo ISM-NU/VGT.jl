@@ -36,9 +36,17 @@ function write_pipeline_outputs(run::PipelineRun)
     write_fits(fit_rbar2_path, run.fit_rbar2; header=product_header(:fit_rbar2))
     write_fits(support_path, Float32.(run.fit_support); header=product_header(:support))
 
-    fig, ax, hm = heatmap(run.psi, colormap=:jet)
-    Colorbar(fig[1, 2], hm, label="Psi (rad)")
-    save(plot_path, fig)
+    # An all-NaN angle map (e.g. a velocity window with no emission above the
+    # noise mask) is a valid empty result, but Makie cannot plot it: the color
+    # range is NaN. Skip the quick-look and record that in the metadata.
+    if any(isfinite, run.psi)
+        fig, ax, hm = heatmap(run.psi, colormap=:jet)
+        Colorbar(fig[1, 2], hm, label="Psi (rad)")
+        save(plot_path, fig)
+    else
+        @warn "no finite angles; plot skipped" plot_path
+        plot_path = nothing
+    end
 
     outputs = (;
         psi_path,
@@ -91,12 +99,13 @@ function run_metadata(run::PipelineRun, outputs)
         "outputs" => Dict{String, Any}(
             "psi_path" => outputs.psi_path,
             "reliability_path" => outputs.reliability_path,
-            "plot_path" => outputs.plot_path,
             "fit_rbar2_path" => outputs.fit_rbar2_path,
             "support_path" => outputs.support_path,
             "metadata_path" => outputs.metadata_path,
         ),
     )
+    # TOML has no null: the key is absent when the plot was skipped.
+    outputs.plot_path === nothing || (metadata["outputs"]["plot_path"] = outputs.plot_path)
     tag!(metadata; gitpath=projectdir(), warn=false, storepatch=false)
     return metadata
 end

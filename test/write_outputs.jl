@@ -3,6 +3,7 @@ using DrWatson
 using FITSIO
 using JLD2
 using Test
+using TOML
 
 @testset "next available output path" begin
     mktempdir() do dir
@@ -270,5 +271,33 @@ end
         @test run.performance.julia_threads >= 1
         @test run.performance.ny_chunks == 1
         @test run.performance.elapsed_seconds >= 0
+    end
+end
+
+@testset "all-NaN angle map: outputs and metadata are written, plot skipped" begin
+    mktempdir() do dir
+        input = joinpath(dir, "empty.fits")
+        cfg = VGT.VGTConfig(input_file=input, output_dir=joinpath(dir, "out"), noise=1.0, dn=4, ker=1, ny_chunks=1, min_valid=4)
+        n = 6
+        run = VGT.PipelineRun(
+            config=cfg,
+            psi=fill(NaN, n, n),
+            reliability=fill(NaN32, n, n),
+            Q=zeros(n, n),
+            U=zeros(n, n),
+            I=zeros(n, n),
+            fit_rbar2=fill(NaN, n, n),
+            fit_support=zeros(n, n),
+            header=nothing,
+            diagnostics=VGT.VGTDiagnostics(),
+        )
+        outputs = @test_logs (:warn, r"no finite angles; plot skipped") VGT.write_pipeline_outputs(run)
+        @test isfile(outputs.psi_path)
+        @test isfile(outputs.support_path)
+        @test outputs.plot_path === nothing
+        @test isfile(outputs.metadata_path)
+        metadata = TOML.parsefile(outputs.metadata_path)
+        @test !haskey(metadata["outputs"], "plot_path")
+        @test metadata["outputs"]["psi_path"] == outputs.psi_path
     end
 end
