@@ -125,6 +125,48 @@ end
 end
 
 
+# Gradient stencils at interior pixel (i, j) of a 2D image; the sign convention
+# (left minus right) is the historical one and does not matter for axial angles.
+# :central_checked  (a[i-1] - a[i+1]) / 2.
+# :sobel_checked    central difference times [1, 2, 1] / 4 across it (Sobel / 8).
+# :isotropic_checked central difference times [1, 4, 1] / 6 across it.
+# On a plane wave of wavenumber k (rad/pixel) at gradient angle theta, central
+# differences return the angle theta + (k^2 / 24) sin(4 theta) + O(k^4): the
+# square grid pulls gradients towards the diagonals. Smoothing across the
+# difference with [a, 1 - 2a, a] adds -(a k^2 / 4) sin(4 theta); Sobel (a = 1/4)
+# overshoots to -(k^2 / 48) sin(4 theta), and a = 1/6 cancels the k^2 term
+# (Farid & Simoncelli 2004 treat the general rotation-invariance problem).
+# test/angle_calibration.jl checks these responses; validation in
+# docs/validation-angle-calibration.md.
+@inline function _stencil_gradient(img::AbstractMatrix, i::Int, j::Int, mode::Symbol)
+    @inbounds begin
+        if mode === :central_checked
+            return (img[i - 1, j] - img[i + 1, j]) / 2, (img[i, j - 1] - img[i, j + 1]) / 2
+        elseif mode === :sobel_checked
+            gx = (
+                img[i - 1, j - 1] + 2 * img[i - 1, j] + img[i - 1, j + 1] -
+                img[i + 1, j - 1] - 2 * img[i + 1, j] - img[i + 1, j + 1]
+            ) / 8
+            gy = (
+                img[i - 1, j - 1] + 2 * img[i, j - 1] + img[i + 1, j - 1] -
+                img[i - 1, j + 1] - 2 * img[i, j + 1] - img[i + 1, j + 1]
+            ) / 8
+            return gx, gy
+        elseif mode === :isotropic_checked
+            gx = (
+                img[i - 1, j - 1] + 4 * img[i - 1, j] + img[i - 1, j + 1] -
+                img[i + 1, j - 1] - 4 * img[i + 1, j] - img[i + 1, j + 1]
+            ) / 12
+            gy = (
+                img[i - 1, j - 1] + 4 * img[i, j - 1] + img[i + 1, j - 1] -
+                img[i - 1, j + 1] - 4 * img[i, j + 1] - img[i + 1, j + 1]
+            ) / 12
+            return gx, gy
+        end
+    end
+    throw(ArgumentError("No stencil for gradient_mode=$mode"))
+end
+
 function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
                                min_valid::Int=100,
                                fitter_mode::Symbol=:axial_vonmises,
@@ -145,7 +187,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
         throw(ArgumentError("min_valid=$min_valid exceeds the maximum window area dn^2=$(dn * dn)"))
     dn <= nx || throw(ArgumentError("dn=$dn is too large for nx=$nx (need nx ≥ $dn)"))
     dn <= ny || throw(ArgumentError("dn=$dn is too large for ny=$ny (need ny ≥ $dn)"))
-    gradient_mode in (:central_checked, :sobel_checked, :nan_edge_backward) ||
+    gradient_mode in GRADIENT_MODES ||
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
@@ -237,8 +279,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 down_ok = mask_image[i, j - 1] >= (scalar_noise ? noise : noise[i, j - 1, channel])
                 up_ok = mask_image[i, j + 1] >= (scalar_noise ? noise : noise[i, j + 1, channel])
                 if center_ok && left_ok && right_ok && down_ok && up_ok
-                    gx = (channel_image[i - 1, j] - channel_image[i + 1, j]) / 2
-                    gy = (channel_image[i, j - 1] - channel_image[i, j + 1]) / 2
+                    gx, gy = _stencil_gradient(channel_image, i, j, :central_checked)
                     if whiten_maps !== nothing
                         gx, gy = _whiten_gradient_at(whiten_maps, i, j, gx, gy)
                     elseif whiten_w !== nothing
@@ -250,7 +291,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                     grad_x[i, j] = NaN
                     grad_y[i, j] = NaN
                 end
-            else # :sobel_checked
+            else # :sobel_checked or :isotropic_checked (3x3 stencils)
                 if i == 1 || i == nx || j == 1 || j == ny
                     grad_x[i, j] = NaN
                     grad_y[i, j] = NaN
@@ -265,14 +306,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                     end
                 end
                 if valid_stencil
-                    gx = (
-                        channel_image[i - 1, j - 1] + 2 * channel_image[i - 1, j] + channel_image[i - 1, j + 1] -
-                        channel_image[i + 1, j - 1] - 2 * channel_image[i + 1, j] - channel_image[i + 1, j + 1]
-                    ) / 8
-                    gy = (
-                        channel_image[i - 1, j - 1] + 2 * channel_image[i, j - 1] + channel_image[i + 1, j - 1] -
-                        channel_image[i - 1, j + 1] - 2 * channel_image[i, j + 1] - channel_image[i + 1, j + 1]
-                    ) / 8
+                    gx, gy = _stencil_gradient(channel_image, i, j, gradient_mode)
                     if whiten_maps !== nothing
                         gx, gy = _whiten_gradient_at(whiten_maps, i, j, gx, gy)
                     elseif whiten_w !== nothing

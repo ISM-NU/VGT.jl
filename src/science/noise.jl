@@ -269,7 +269,8 @@ end
 
 Covariance of the gradient vector (gx, gy) over all interior pixels of `cube`
 (x, y, channel), with the same stencil and normalisation as the VGT kernel
-(`:central_checked`: (a - b) / 2; `:sobel_checked`: Sobel / 8). Pass only
+(`:central_checked`: (a - b) / 2; `:sobel_checked`: Sobel / 8;
+`:isotropic_checked`: central difference times [1, 4, 1] / 6). Pass only
 emission-free channels. Returns a named tuple: `cov = [sxx, syy, sxy]` (the
 `gradient_noise_cov` config value), `sigma_x`, `sigma_y`, the gradient
 anisotropy `anisotropy` = |sum g^2 e^(2i theta)| / sum g^2 and the preferred
@@ -278,22 +279,14 @@ gradient `direction_deg` (axis of the larger variance, counter-clockwise from
 """
 function measure_gradient_noise(cube::AbstractArray{<:Real, 3};
                                 gradient_mode::Symbol=:central_checked)
-    gradient_mode in (:central_checked, :sobel_checked) ||
-        throw(ArgumentError("measure_gradient_noise supports :central_checked and :sobel_checked; got $gradient_mode"))
+    gradient_mode in (:central_checked, :sobel_checked, :isotropic_checked) ||
+        throw(ArgumentError("measure_gradient_noise supports :central_checked, :sobel_checked and :isotropic_checked; got $gradient_mode"))
     nx, ny, nv = size(cube)
     (nx >= 3 && ny >= 3) || throw(ArgumentError("cube needs at least 3 pixels per sky axis"))
     n = 0
     sx = sy = sxx = syy = sxy = 0.0
     @inbounds for k in 1:nv, j in 2:(ny - 1), i in 2:(nx - 1)
-        if gradient_mode === :central_checked
-            gx = (cube[i - 1, j, k] - cube[i + 1, j, k]) / 2
-            gy = (cube[i, j - 1, k] - cube[i, j + 1, k]) / 2
-        else
-            gx = (cube[i - 1, j - 1, k] + 2 * cube[i - 1, j, k] + cube[i - 1, j + 1, k] -
-                  cube[i + 1, j - 1, k] - 2 * cube[i + 1, j, k] - cube[i + 1, j + 1, k]) / 8
-            gy = (cube[i - 1, j - 1, k] + 2 * cube[i, j - 1, k] + cube[i + 1, j - 1, k] -
-                  cube[i - 1, j + 1, k] - 2 * cube[i, j + 1, k] - cube[i + 1, j + 1, k]) / 8
-        end
+        gx, gy = _stencil_gradient(view(cube, :, :, k), i, j, gradient_mode)
         (isfinite(gx) && isfinite(gy)) || continue
         n += 1
         sx += gx; sy += gy; sxx += gx * gx; syy += gy * gy; sxy += gx * gy
@@ -425,23 +418,15 @@ must vary slowly compared with it.
 function gradient_noise_cov_map(cube::AbstractArray{<:Real, 3};
                                 gradient_mode::Symbol=:central_checked,
                                 fwhm_pixels::Real=60)
-    gradient_mode in (:central_checked, :sobel_checked) ||
-        throw(ArgumentError("gradient_noise_cov_map supports :central_checked and :sobel_checked; got $gradient_mode"))
+    gradient_mode in (:central_checked, :sobel_checked, :isotropic_checked) ||
+        throw(ArgumentError("gradient_noise_cov_map supports :central_checked, :sobel_checked and :isotropic_checked; got $gradient_mode"))
     fwhm_pixels > 0 || throw(ArgumentError("fwhm_pixels must be > 0"))
     nx, ny, nv = size(cube)
     (nx >= 3 && ny >= 3) || throw(ArgumentError("cube needs at least 3 pixels per sky axis"))
     sums = zeros(nx, ny, 3)
     counts = zeros(nx, ny)
     @inbounds for k in 1:nv, j in 2:(ny - 1), i in 2:(nx - 1)
-        if gradient_mode === :central_checked
-            gx = (cube[i - 1, j, k] - cube[i + 1, j, k]) / 2
-            gy = (cube[i, j - 1, k] - cube[i, j + 1, k]) / 2
-        else
-            gx = (cube[i - 1, j - 1, k] + 2 * cube[i - 1, j, k] + cube[i - 1, j + 1, k] -
-                  cube[i + 1, j - 1, k] - 2 * cube[i + 1, j, k] - cube[i + 1, j + 1, k]) / 8
-            gy = (cube[i - 1, j - 1, k] + 2 * cube[i, j - 1, k] + cube[i + 1, j - 1, k] -
-                  cube[i - 1, j + 1, k] - 2 * cube[i, j + 1, k] - cube[i + 1, j + 1, k]) / 8
-        end
+        gx, gy = _stencil_gradient(view(cube, :, :, k), i, j, gradient_mode)
         (isfinite(gx) && isfinite(gy)) || continue
         sums[i, j, 1] += gx * gx; sums[i, j, 2] += gy * gy; sums[i, j, 3] += gx * gy
         counts[i, j] += 1

@@ -4,6 +4,8 @@
 # such as window size, noise model, fitter mode, and masking policy.
 
 const ANGLE_FRAMES = (:pixel, :galactic, :icrs)
+# :isotropic_checked is opt-in (docs/validation-angle-calibration.md); :central_checked is the default.
+const GRADIENT_MODES = (:central_checked, :sobel_checked, :isotropic_checked, :nan_edge_backward)
 
 function normalize_angle_frame(value)
     frame = _symbol_config_value(value)
@@ -246,7 +248,7 @@ normalize_fitter_mode(value) = _normalize_mode(value, :fitter_mode, (:axial_vonm
 normalize_noise_mode(value) =
     _normalize_mode(value, :noise_mode, (:scalar, :channel, :spatial, :separable, :auto))
 normalize_gradient_mode(value) =
-    _normalize_mode(value, :gradient_mode, (:central_checked, :sobel_checked, :nan_edge_backward))
+    _normalize_mode(value, :gradient_mode, GRADIENT_MODES)
 
 # Config keys removed in 0.1.0 and the only value each still tolerates (its old
 # default, which changes nothing). Any other value would have changed the science.
@@ -310,7 +312,7 @@ function _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
         throw(ArgumentError("Unsupported zero_stokes_policy=$zero_stokes_policy"))
     output_support_mode in (:smoothed_stokes_support, :direct_fit_support) ||
         throw(ArgumentError("Unsupported output_support_mode=$output_support_mode"))
-    gradient_mode in (:central_checked, :sobel_checked, :nan_edge_backward) ||
+    gradient_mode in GRADIENT_MODES ||
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
@@ -334,7 +336,7 @@ function _validate_gradient_whiten(gradient_whiten, gradient_noise_cov, gradient
             throw(ArgumentError("gradient_noise_cov = [sxx, syy, sxy] must be finite and positive definite (sxx > 0, syy > 0, sxx*syy > sxy^2); got $(gradient_noise_cov)"))
     end
     gradient_mode === :nan_edge_backward &&
-        throw(ArgumentError("gradient_whiten is not supported with gradient_mode=:nan_edge_backward; use :central_checked or :sobel_checked"))
+        throw(ArgumentError("gradient_whiten is not supported with gradient_mode=:nan_edge_backward; use :central_checked, :sobel_checked or :isotropic_checked"))
     return nothing
 end
 

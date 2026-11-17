@@ -103,6 +103,8 @@ ny_chunks = "auto"
 # Gradient stencil:
 #   "central_checked"    default; central differences, all stencil pixels above threshold
 #   "sobel_checked"      Sobel stencil
+#   "isotropic_checked"  opt-in comparison; central differences with [1, 4, 1]/6 across them, which
+#                        cancels the leading grid-locked angle term (docs/validation-angle-calibration.md)
 #   "nan_edge_backward"  backward differences, first row/column invalid
 # gradient_mode = "central_checked"
 

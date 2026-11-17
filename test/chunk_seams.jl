@@ -18,7 +18,7 @@ using Test
         end
         path = joinpath(dir, "c.fits")
         FITS(f -> write(f, cube; header=h), path, "w")
-        for mode in (:central_checked, :sobel_checked, :nan_edge_backward)
+        for mode in (:central_checked, :sobel_checked, :isotropic_checked, :nan_edge_backward)
             base = (; input_file=path, keep_intermediate_chunks=false, noise=1.0, dn=6, ker=1, min_valid=4,
                     gradient_mode=mode)
             one = run_pipeline(VGTConfig(; base..., ny_chunks=1, output_dir=joinpath(dir, "one_$mode")))
