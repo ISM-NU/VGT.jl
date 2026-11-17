@@ -18,7 +18,8 @@ more accurate by
   the Lazarian group's noise recipe (Lazarian et al. 2017, ApJ 842, 30; Lazarian et al. 2018, ApJ 865, 46: Gaussian
   smoothing of sigma 2-4 px before the gradients).
 
-Literature (full texts read): no Lazarian-group paper weights gradients by amplitude inside a block; Lazarian et al.
+Literature (full texts read): none of the Lazarian-group papers read weights gradients by amplitude inside a block
+(Hu et al. 2019, Nature Astronomy 3, 776, Lu et al. 2020 and Hu & Lazarian 2023 were not read); Lazarian et al.
 2018 (footnote 13) suggest filtering the smallest-amplitude gradients as noise but do not test it, and Lazarian &
 Yuen 2018 (ApJ 853, 96) link the largest amplitudes to shocks. PCA filtering (Hu, Yuen & Lazarian 2018, MNRAS 480,
 1333) was not tested here: it ranks velocity structure by variance, which favours the bright layer, and Hu et al.
@@ -61,7 +62,8 @@ Paired dAM at 10' (variant minus plain, +- bootstrap std; cubes with dAM > 0 in 
 | all, 23 | 0.657 | -0.006 +- 0.009 (4/8) | -0.058 +- 0.018 (0/8) | -0.060 +- 0.018 (0/8) |
 | all, 46 | 0.703 | -0.012 +- 0.006 (2/8) | -0.051 +- 0.013 (0/8) | -0.055 +- 0.014 (0/8) |
 
-Window-level AM at 10' against each window's own truth, by `rho_g` (all windows, cubes, seeds, S/N):
+Window-level AM at 10' against each window's own truth, by `rho_g` (all windows, cubes, seeds, S/N), and the paired
+difference to plain (bootstrap over cubes; cubes with a positive difference):
 
 | rho_g | n | plain | V1 | V2 | V1 + V2 |
 |---|---|---|---|---|---|
@@ -73,8 +75,20 @@ Window-level AM at 10' against each window's own truth, by `rho_g` (all windows,
 | 2.5-4 | 388 | 0.633 | 0.628 | 0.575 | 0.584 |
 | > 4 | 309 | 0.640 | 0.631 | 0.565 | 0.570 |
 
+| rho_g | V1 - plain | V2 - plain |
+|---|---|---|
+| < 0.5 | +0.035 +- 0.006 (8/8) | +0.022 +- 0.013 (5/8) |
+| 0.5-0.8 | +0.037 +- 0.003 (8/8) | -0.001 +- 0.006 (4/8) |
+| 0.8-1.2 | +0.022 +- 0.001 (8/8) | -0.032 +- 0.004 (0/8) |
+| 1.2-1.7 | +0.010 +- 0.001 (8/8) | -0.052 +- 0.005 (0/8) |
+| 1.7-2.5 | +0.002 +- 0.002 (6/8) | -0.063 +- 0.007 (0/8) |
+| 2.5-4 | -0.005 +- 0.002 (1/8) | -0.058 +- 0.006 (0/8) |
+| > 4 | -0.008 +- 0.004 (2/8) | -0.074 +- 0.007 (0/8) |
+
 Rule: V1 fails (1) (+0.010 +- 0.006 pooled, 1.6 sigma; 3-5 of 8 cubes), (2) (-0.012 at S/N 46) and (3). V2 fails
-all three. The 120' scale could not be tested: the layer sum is NaN wherever one window has no coverage at 180 px,
+all three. The layer test is scored only where every window of the layer is covered (159-310 of 512 blocks for the
+wing layer at S/N 8-16), i.e. on brighter pixels than the `rho_g` label describes, which works against V1; V2 loses
+at both the layer and the window level. The 120' scale could not be tested: the layer sum is NaN wherever one window has no coverage at 180 px,
 which in these patchy cubes is almost everywhere below S/N 46 (a harness limitation; at S/N 46 the dAM at 120' is
 -0.005 +- 0.041 for V1 and -0.086 +- 0.055 for V2).
 
@@ -82,17 +96,19 @@ which in these patchy cubes is almost everywhere below S/N 46 (a harness limitat
 
 - Plain VGT's 10' agreement saturates near AM 0.63 above `rho_g` about 2; below that the noise costs 0.03-0.2.
   At `rho_g` 0.8-1.7 the loss is 0.03-0.08 (window level).
-- V1 recovers part of that loss where `rho_g` < 1.2 (+0.02 to +0.04 per window) and costs 0.005-0.009 above
-  `rho_g` 2.5. On a layer that mixes windows of different S/N the two cancel to within the errors, so V1 is not a
-  general improvement.
-- V2 lowers the ceiling (0.57 instead of 0.63): a 4 px pre-filter on a 3 px beam removes the small-scale structure
-  that VGT's gradients read, and only at `rho_g` < 0.5 does the noise reduction win. The maps of the four variants
+- V1 recovers part of that loss where `rho_g` < 1.7 (+0.01 to +0.04 per window, every cube) and costs 0.005-0.008
+  above `rho_g` 2.5. On the declared layer test the two do not add up to a 2 sigma gain, so V1 is not a general
+  improvement; its window-level gain at low `rho_g` is what the follow-up below would test.
+- V2 lowers the ceiling (0.57 instead of 0.63): a 4 px pre-filter on a 3 px beam appears to remove the small-scale
+  structure that VGT's gradients read, and only at `rho_g` < 0.5 does the noise reduction win. The maps of the four variants
   share the same pattern of direction errors, set by the gas and field structure, not by the noise.
 - The CATS wing windows at matched `rho_g` pass the 3 sigma mask on 30-60 % of pixels; observed faint layers that
   are smooth and bright (high coverage, low `rho_g`) are a different regime that this test does not reproduce.
 
 ## Open
 
-- An S/N-switched weighting (V1 only in windows with `rho_g` below about 1) is suggested by the window-level table but
+- The 120' scale: on a 256 px box each cube gives about one independent 120' sample, so a fixed harness adds only
+  8 points.
+- An S/N-switched weighting (V1 only in windows with `rho_g` below about 1.7) is suggested by the window-level table but
   was not declared; it needs its own declared test, with the 120' layer sum counting empty windows as zero.
 - Noise anisotropy and non-Gaussian (scan-stripe) noise are not in these cubes.
