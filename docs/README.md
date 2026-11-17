@@ -15,6 +15,9 @@ evidence, or reference).
 - `validation-gradient-whitening.md` — synthetic test of opt-in gradient
   whitening against correlated, anisotropic noise (and the rejected gradient
   S/N mask). Validation evidence.
+- `validation-angle-calibration.md` — grid-locked angle bias of the gradient
+  stencils on synthetic fields with known angles, and the opt-in
+  `isotropic_checked` stencil. Validation evidence.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.
