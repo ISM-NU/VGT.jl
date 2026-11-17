@@ -21,8 +21,8 @@ using VGT
 # the wavenumbers that carry the gradients (beam, spectrum, noise, window dispersion), hence this measurement.
 #
 # Declared before running (2026-11-17):
-# - Material bias: |A4| > 1 deg at dn 20, ker 4, 3 px beam (the window settings of the foreground templates on
-#   GASKAP 40" and GALFA 80" pixels; both have a 3 px beam, so in pixel units the two differ only in S/N).
+# - Material bias: |A4| > 1 deg at dn 20, ker 4, 3 px beam (the window settings of the foreground templates; the
+#   beam is 3 px, so in pixel units only the S/N differs between surveys).
 #   If |A4| <= 1 deg for :central_checked at every S/N, the stencil is not a material bias and no correction is made.
 #   If |A4| > 1 deg and :isotropic_checked brings it below 0.3 deg without losing alignment (AM within 0.01), the
 #   new mode is the correction, used opt-in.
@@ -53,6 +53,8 @@ using VGT
 #       [--part grf|cats|both] [--seeds 8] [--cats-dir data/external/cats] [--cats-runs b1p1,b.1p1] [--quick 1]
 # --configs TAG,...: only these GRF configurations (tags main, beta11/3, zeta1, zeta8, dn10, dn40).
 # --seed-offset S: GRF seeds S+1..S+seeds, to split the seeds over jobs (summarize_angle_bias.py takes several CSVs).
+# --lowk-cut L: zero the GRF modes with |k| < 2 pi / L (L in px; default off). On a 512 px lattice the few lowest
+#   modes have quantised directions, which can make a grid-locked term of the generator itself (see the note).
 # --quick 1: smoke test (angles 0 and 20, a 128 px GRF, one configuration, CATS with 40 channels).
 #
 # Writes <out>/grf_runs.csv, <out>/grf_fit.csv, <out>/cats_runs.csv, <out>/cats_fit.csv and PNG plots.
@@ -62,6 +64,7 @@ ANGLES = 0:5:85            # replaced by --quick
 QUICK = false
 const BEAM = 3.0
 const KER = 4
+KCUT = 0.0                 # --lowk-cut L: GRF modes with |k| < 2 pi / L (rad/px) are zeroed; 0 = off (default)
 
 function parse_args(args)
     o = Dict("out" => "validation_output/angle_bias", "part" => "both", "seeds" => "8",
@@ -96,7 +99,7 @@ function grf_channel(phase, t, beta, zeta, r)
     k = kgrid(n)
     amp = [begin
                kk = hypot(a, b)
-               kk == 0 ? 0.0 : kk^(-beta / 2) * exp(-0.5 * zeta * cos(atan(b, a) - t)^2) * beam_tf(a, b, BEAM)
+               (kk == 0 || kk < KCUT) ? 0.0 : kk^(-beta / 2) * exp(-0.5 * zeta * cos(atan(b, a) - t)^2) * beam_tf(a, b, BEAM)
            end for a in k, b in k]
     f = fft(real.(ifft(phase .* amp)))
     hp = real.(ifft(f .* [highpass_tf(a, b) for a in k, b in k]))
@@ -390,6 +393,7 @@ function main(args)
         o["cats-nv"] = "40"
         o["cats-runs"] = first(split(o["cats-runs"], ","))
     end
+    haskey(o, "lowk-cut") && (global KCUT = 2pi / parse(Float64, o["lowk-cut"]))
     mkpath(o["out"])
     o["part"] in ("grf", "both") && grf_part(o)
     o["part"] in ("cats", "both") && cats_part(o)

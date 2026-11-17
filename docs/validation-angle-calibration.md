@@ -53,6 +53,14 @@ the evaluated pixels. Declared before running: a bias counts as material if
   turbulence), zeta 3, r = Inf, 4, 2, 1; side runs at r = 2: beta 11/3, zeta 1
   and 8, dn 10 and 40. t = 0, 5, ..., 85 deg; the same random phases at every t.
   Harmonics fitted per seed, mean and standard error over seeds.
+- Declared before running (2026-11-17, step added after the k^-11/3 result below, before the run): an independent
+  review predicts that the about -0.9 deg term of the k^-11/3 fields is a property of the generator, not of any
+  stencil or of the window. On a 512^2 lattice the few lowest modes have quantised directions, and the generator's
+  own gradient-power-weighted orientation gives A4 -1.16 and A8 -0.24 deg for k^-11/3 and -0.05 for k^-8/3 (a
+  cut at |k| < 2 pi/32 drops it to -0.05; 1024^2 fields still give -0.87). Test: the k^-11/3 case (r = 2, zeta 3,
+  dn 20) with the modes |k| < 2 pi/32 zeroed (`--lowk-cut 32`), the same 17 seeds and settings, all stencils.
+  Expected: isotropic A4 near 0 and central A4 near +0.3 to +0.85 deg (the paired stencil term, +0.30). If the
+  term stays near -0.9 deg, the window or the estimator is implicated and the prediction fails.
 - CATS MHD (Burkhart et al. 2020), run b1p1, line of sight 3, 218 channels,
   thermal width 1.0, as the earlier calibration runs: the beam-smoothed cube is
   rotated by t (4x FFT upsampling, Keys cubic sampling; identity at 0 deg 8e-9,
