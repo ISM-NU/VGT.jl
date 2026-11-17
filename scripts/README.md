@@ -66,6 +66,12 @@ they do not replace the script-specific FITS, text, or CSV outputs.
   support and `rbar2`. Focused sweeps can be filtered with `VGT_MW_MODES`,
   `VGT_MW_FITTERS`, `VGT_MW_MIN_VALID` and `VGT_MW_SIZE`.
 
+`validate_angle_bias.jl`
+: Grid-locked angle bias (VGT minus true angle against the true angle) of the
+  central, Sobel and isotropic stencils on anisotropic Gaussian random fields
+  and on rotated CATS MHD cubes, with the harmonic fit A4 sin(4t) + A8 sin(8t);
+  `--quick 1` is a smoke test. Results: `docs/validation-angle-calibration.md`.
+
 `validate_gradient_whitening.jl`
 : Opt-in gradient whitening (`gradient_whiten`) against correlated, slightly
   anisotropic noise: angle bias toward the noise direction, scatter and coverage on
