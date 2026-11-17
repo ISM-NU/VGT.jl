@@ -13,6 +13,8 @@ more accurate by
 - V1, `gradient_weight = "amplitude2"`: each gradient's doubled angle weighted by `|g|^2` in the window fit (the
   structure tensor). Under isotropic noise a gradient's doubled-angle variance is about `2 s^2 / |G|^2`, so this is
   the inverse-variance weight, and the noise adds nothing to the expected sums, so the angle stays unbiased.
+  Under `amplitude2`, `rbar2` becomes the weighted resultant, which changes `rbar2_gate`, `rbar2_weight` and
+  `psi_fit_rbar2`.
 - V2, a Gaussian pre-filter of every channel (FWHM 4 px on a 3 px beam) before the gradients, with the noise mask and
   the Stokes weights still on the unfiltered channel (`input_file` = filtered cube, `weight_file` = raw cube). This is
   the Lazarian group's noise recipe (Lazarian et al. 2017, ApJ 842, 30; Lazarian et al. 2018, ApJ 865, 46: Gaussian

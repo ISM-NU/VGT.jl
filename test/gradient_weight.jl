@@ -37,6 +37,11 @@ using Test
     @test a1.angle ≈ a2.angle atol = 1e-12
     @test a1.rbar2 ≈ a2.rbar2 atol = 1e-12
 
+    # The angle must not depend on the gradient units (a fixed floor once turned tiny gradients into NaN).
+    small = VGT.fit_window_result(:axial_vonmises, 1e-6 .* gx, 1e-6 .* gy; gradient_weight=:amplitude2)
+    @test small.fit_ok
+    @test small.angle ≈ amp.angle atol = 1e-9
+
     @test_throws ArgumentError VGT.fit_window_result(:axial_vonmises, gx, gy; gradient_weight=:amplitude)
     @test !VGT.fit_window_result(:axial_vonmises, [0.0, 0.0], [0.0, 0.0]; gradient_weight=:amplitude2).fit_ok
 end

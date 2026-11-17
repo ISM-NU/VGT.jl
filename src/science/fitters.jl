@@ -161,7 +161,8 @@ function _axial_resultant_stats_paired_amp2(grad_x::AbstractArray, grad_y::Abstr
     n == 0 && return (; angle=NaN, rbar2=NaN, effective_n=0, resultant=NaN)
     resultant = hypot(s, c)
     rbar2 = wsum > 0 ? resultant / wsum : NaN
-    angle = resultant <= sqrt(eps(Float64)) * max(wsum, 1.0) ? NaN : _wrap_axial_angle(0.5 * atan(s, c))
+    # Scale-free: a fixed floor would drop every window when |g| is small (units of 1e-6).
+    angle = resultant <= sqrt(eps(Float64)) * wsum ? NaN : _wrap_axial_angle(0.5 * atan(s, c))
     angle = isfinite(angle) ? angle : NaN
     # resultant is reported on the unit-weight scale (rbar2 * n) so the degenerate test below matches.
     return (; angle, rbar2, effective_n=n, resultant=isfinite(rbar2) ? rbar2 * n : 0.0)
