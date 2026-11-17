@@ -114,3 +114,21 @@ which in these patchy cubes is almost everywhere below S/N 46 (a harness limitat
 - An S/N-switched weighting (V1 only in windows with `rho_g` below about 1.7) is suggested by the window-level table but
   was not declared; it needs its own declared test, with the 120' layer sum counting empty windows as zero.
 - Noise anisotropy and non-Gaussian (scan-stripe) noise are not in these cubes.
+
+## Beam-scaled low-pass before the gradients (variant lp, added 2026-11-17)
+
+Status: validation evidence, cost check only. Declared in `scripts/validate_faint_gas.jl` before the run; branch
+`lowpass-prefilter`, not merged.
+
+- What: each channel is low-passed in |k| before the gradients (mask and Stokes weights on the raw channel, as V2):
+  pass where the beam's power transfer is >= 10 %, zero where it is <= 2 %, raised-cosine taper between (k 0.190 to
+  0.247 cycles/px for the 3 px beam). Unlike V2 it leaves every k inside the beam's passband unchanged. Its purpose is
+  instrument patterns above the beam cutoff; the CATS noise here is beam-convolved, so this run can show a cost, not a
+  gain.
+- Result (`scripts/figures/lowpass_summary.py`, the 4 sims as units, 3 seeds, S/N 8-46): plain AM reproduces the
+  table above. Paired dAM lp - plain at 10': wing -0.005 +- 0.003 (S/N 12) to +0.008 +- 0.012 (S/N 8), pooled
+  -0.0013 +- 0.0013; all windows -0.0026 to -0.0009 at S/N 12-46 (errors 0.001-0.008; S/N 8 has 6 blocks and is not read), pooled
+  -0.0018 +- 0.0011. The declared rule
+  reads "free": the cost is at most 0.005, at 1-2 sigma with 4 units. Per-window AM by `rho_g` changes by at most
+  0.004.
+

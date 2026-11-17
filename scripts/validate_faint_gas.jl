@@ -57,8 +57,9 @@ using VGT
 #     raised-cosine taper between; for the 3 px beam (s = 1.274 px) k1 = 0.190, k2 = 0.247 cycles/px. Why it differs
 #     from pre4: pre4 (Gaussian FWHM 4 px) attenuates the sky inside the beam's passband (amplitude 0.57 at k = 0.1, 0.28
 #     at 0.15), while lp passes every k below k1 unchanged and removes only scales the beam has already suppressed;
-#     its use is against instrument patterns above the beam cutoff (GALFA scan pattern, LMC-foreground
-#     scripts/galfa_6c_lowpass.py). Question here: is lp free on clean data? Units: the 4 sims (lines of sight 2 and
+#     its use is against instrument patterns above the beam cutoff (for example survey scan patterns, which the
+#     central-difference gradient, response |sin 2 pi k| peaking at k = 0.25, reads at full weight). Question here:
+#     is lp free on clean data? (The CATS noise is beam-convolved, so this tests cost only, not a gain.) Units: the 4 sims (lines of sight 2 and
 #     3 pooled within a sim), paired lp - plain, bootstrap over sims then 32 px blocks
 #     (scripts/figures/lowpass_summary.py). Rule: "free" if, at 10' for both layers, dAM at S/N 23 and 46 is >= -0.005
 #     or within 2 sigma of 0, and dAM pooled over the five S/N levels (sims x S/N as units) is not below 0 by more than
