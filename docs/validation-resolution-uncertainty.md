@@ -49,6 +49,36 @@ same r, 3 sigma mask. Windows dn in {8, 12, 16, 20, 32, 48}, ker in {1, 2, 4}, m
    0.92-0.98, for r >= 1 at dn 20 / ker 4, on the random fields and CATS. Reported for dn 12 and 32 and r = 0.5;
    scale 1 (added noise as large as the cube's) and 0.5 both run, the one closer to calibration is the default.
 
+## What the noise uncertainty depends on (first-order chain)
+
+[interpretation, standard error propagation; the Monte Carlo is the measurement] Each step adds its own noise term:
+
+1. Gradient: central differences of a channel with noise rms sigma_n and lag-2 noise correlation rho_2 have noise
+   rms sigma_g = sigma_n sqrt((1 - rho_2) / 2) per component (0.48 sigma_n for a 3 px beam, rho_2 = 0.54). The
+   gradient angle of pixel i then scatters by about sigma_g / |g_i|, saturating at uniform angles when |g_i| is
+   comparable to sigma_g.
+2. Window: the window angle moves by sum_i cos 2(phi_i - Phi) d(phi_i) / (n Rbar), so its noise falls as
+   1 / (Rbar sqrt(n_eff)), with n_eff = n divided by the number of pixels a noise blob spans (about 10 for a 3 px
+   beam, so a 20 x 20 window holds about 40 independent noise samples), and grows when the gradients in the window
+   disagree (low Rbar).
+3. Channels: the intensity-weighted sum over channels averages independent channel noise; adjacent-channel noise
+   correlation reduces the gain.
+4. Smoothing: the Gaussian `ker` averages over neighbouring windows, which share most of their pixels, so it adds
+   little beyond the box (variance ratio about dn^2/12 / (dn^2/12 + (0.88 ker)^2), 0.73 for dn 20, ker 4).
+5. Mask: at the 3 sigma threshold, noise switches faint voxels in and out of the fit; this is non-linear and is
+   why the error is measured by Monte Carlo rather than from the formula.
+
+So sigma_psi is largest where the gas is faint (small |g| / sigma_n), where gradients in a window disagree (low
+coherence), and where few channels carry signal; it shrinks as 1/dn at fixed S/N, which is the resolution cost.
+
 ## Results
 
-Pending (cluster runs).
+Pending (cluster jobs queued 2026-11-21, Slurm start estimates 2026-11-22 morning).
+
+Smoke test (1 seed, K = 4 realisations, two wavelengths; not a result, a check that the pipeline works):
+- dn 20, ker 4: FWHM 16.7 px measured against 16.3 px from the formula; dn 20, ker 1: 14.5 against 14.1; low-k
+  transfer at lambda = 128 px 0.92.
+- CATS b1p1 at r = 1: AM 0.88 for dn 20 / ker 4, 0.80 for dn 12 / ker 4, 0.71 for dn 12 / ker 1.
+- Coverage at r = 1, dn 20: random fields 0.71 within 1 sigma (rms z 1.46, heavy tails expected with K = 4);
+  CATS 0.56-0.61 with a mean error of 2 deg, so on MHD cubes with the mask acting the scatter alone may undercount the
+  error. The full run adds sqrt(sigma^2 + offset^2) (Monte Carlo mean shift) as a post hoc variant.
