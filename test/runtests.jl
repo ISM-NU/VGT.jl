@@ -18,4 +18,5 @@ using Test
     include("pipeline_fit_diagnostics.jl")
     include("chunk_seams.jl")
     include("angle_calibration.jl")
+    include("coherence_debias.jl")
 end
