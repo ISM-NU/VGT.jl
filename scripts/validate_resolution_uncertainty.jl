@@ -310,7 +310,7 @@ function part_mc(o)
     path = joinpath(o["out"], "mc_runs.csv")
     open(path, "w") do io
         println(io, "field,snr,seed,dn,scale,npix,cov1,cov1_lo,cov1_hi,cov2,rms_z,median_sigma_deg,rms_err_deg," *
-                    "mean_err_deg,median_offset_deg,bin_sigma_deg,bin_rms_err_deg")
+                    "mean_err_deg,median_offset_deg,cov1_tot,cov2_tot,rms_z_tot,bin_sigma_deg,bin_rms_err_deg")
         for (name, dir) in fields, r in snrs, seed in 1:seeds
             isinf(r) && continue
             rng = Xoshiro(9000 + 17 * seed + round(Int, 10r))
@@ -351,10 +351,14 @@ function part_mc(o)
                         push!(be, @sprintf("%.2f", rad2deg(sqrt(mean(e[sel] .^ 2)))))
                     end
                     off = res.offset[rg, rg][ok]
-                    @printf(io, "%s,%s,%d,%d,%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%s\n", name, r,
+                    # Post hoc variant (added after the smoke test, before the full runs): sigma combined with the
+                    # Monte Carlo mean shift, sqrt(sigma^2 + offset^2), as a total error including the noise bias.
+                    zt = e ./ sqrt.(s .^ 2 .+ off .^ 2)
+                    @printf(io, "%s,%s,%d,%d,%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.3f,%s,%s\n", name, r,
                             seed, dn, scale, count(ok), mean(abs.(z[ok]) .<= 1), lo, hi, mean(abs.(z[ok]) .<= 2),
                             sqrt(mean(z[ok] .^ 2)), rad2deg(median(s)), rad2deg(sqrt(mean(e .^ 2))),
-                            rad2deg(mean(e)), rad2deg(median(off)), join(bs, ";"), join(be, ";"))
+                            rad2deg(mean(e)), rad2deg(median(off)), mean(abs.(zt) .<= 1), mean(abs.(zt) .<= 2),
+                            sqrt(mean(zt .^ 2)), join(bs, ";"), join(be, ";"))
                     flush(io)
                 end
                 @info "mc" name r seed dn
