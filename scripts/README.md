@@ -72,6 +72,13 @@ they do not replace the script-specific FITS, text, or CSV outputs.
   and on rotated CATS MHD cubes, with the harmonic fit A4 sin(4t) + A8 sin(8t);
   `--quick 1` is a smoke test. Results: `docs/validation-angle-calibration.md`.
 
+`validate_resolution_uncertainty.jl`
+: Effective resolution (orientation transfer function) against `dn`, `ker` and
+  S/N, window accuracy against effective resolution on synthetic orientation
+  fields and CATS, and coverage of the Monte Carlo angle uncertainty
+  (`psi_noise_mc`); generator in `synthetic_orientation_fields.jl`.
+  Results: `docs/validation-resolution-uncertainty.md`.
+
 `validate_gradient_whitening.jl`
 : Opt-in gradient whitening (`gradient_whiten`) against correlated, slightly
   anisotropic noise: angle bias toward the noise direction, scatter and coverage on

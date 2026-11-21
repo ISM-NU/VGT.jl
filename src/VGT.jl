@@ -26,6 +26,7 @@ include("science/fitters.jl")
 include("science/vgt.jl")
 include("science/products.jl")
 include("science/sky_angles.jl")
+include("science/uncertainty.jl")
 include("pipeline/chunks.jl")
 include("pipeline/run.jl")
 include("pipeline/outputs.jl")
@@ -48,6 +49,7 @@ export choose_auto_threads, choose_auto_chunks, choose_auto_execution
 export estimate_peak_chunk_bytes
 
 export PipelineRun
+export correlated_noise, circular_spread, psi_noise_mc
 export imfilter_gaussian
 export compute_stokes_intensity, compute_reliability
 export finalize_vgt_products, headless_angle_difference, block_mean, bin_header, bin_products
