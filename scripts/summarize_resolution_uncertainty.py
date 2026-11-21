@@ -113,7 +113,7 @@ def fig_accuracy(agg, out):
             a.plot(e.fwhm, e.am_native, "kx", label="rbar2 weight")
             p = d[(d.dn == 20) & (d.ker == 4) & (d.rb == 0)]
             a.plot(p.fwhm, p.am_native, "r*", ms=10, label="production")
-            a.set(title=f"{f}, r = {s}", xlabel="effective FWHM (px)", ylabel="AM vs pixel truth")
+            a.set(title=f"{f}, r = {s}", xlabel="effective FWHM (px, half-transfer)", ylabel="AM vs pixel truth")
             if i == 0 and j == 0:
                 a.legend(fontsize=6)
     fig.tight_layout()
