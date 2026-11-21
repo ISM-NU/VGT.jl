@@ -96,7 +96,8 @@ Monte Carlo noise uncertainty of the VGT angle of an in-memory cube `(nx, ny, nv
 times `scale`), and returns
 
 - `psi`: the angle map of the cube itself (as the pipeline's `psi`, gradient + 90 deg, pixel frame);
-- `sigma_psi`: per-pixel spread of the perturbed maps about their circular mean, divided by `scale`
+- `sigma_psi`: per-pixel spread of the perturbed maps about their circular mean, times sqrt(K / (K - 1)) (unbiased
+  for the estimated mean), divided by `scale`
   (radians; linear error propagation makes the spread proportional to the added noise, so `scale < 1` probes the
   local derivative with less non-linearity, and `scale = 1` adds noise as large as the cube's);
 - `offset`: circular mean of the perturbed maps minus `psi` (radians), the shift that added noise causes;
@@ -137,6 +138,9 @@ function psi_noise_mc(cube::AbstractArray{<:Real, 3}, dn::Int, ker::Int, noise_t
         vals = [r[idx] for r in rels if isfinite(r[idx])]
         length(vals) >= 2 && (sigma_rel[idx] = std(vals) / scale)
     end
-    return (; psi=base.psi, reliability=base.reliability, sigma_psi=spread.sigma ./ scale, offset,
+    # circular_spread is the spread about the sample mean of the K maps (divides by K); sqrt(K / (K - 1)) makes the
+    # variance unbiased, so error / sigma_psi follows Student's t with K - 1 degrees of freedom when calibrated.
+    return (; psi=base.psi, reliability=base.reliability,
+            sigma_psi=spread.sigma .* sqrt(realizations / (realizations - 1)) ./ scale, offset,
             sigma_reliability=sigma_rel, n=spread.n)
 end

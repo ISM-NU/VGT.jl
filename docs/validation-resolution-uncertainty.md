@@ -49,6 +49,12 @@ same r, 3 sigma mask. Windows dn in {8, 12, 16, 20, 32, 48}, ker in {1, 2, 4}, m
    0.92-0.98, for r >= 1 at dn 20 / ker 4, on the random fields and CATS. Reported for dn 12 and 32 and r = 0.5;
    scale 1 (added noise as large as the cube's) and 0.5 both run, the one closer to calibration is the default.
 
+Amendment (2026-11-21, after the smoke test and before any full scoring run): sigma_psi is estimated from K = 16
+maps, so even a perfectly calibrated sigma gives error / sigma_psi distributed as Student's t with K - 1 = 15 degrees
+of freedom (after the sqrt(K / (K - 1)) correction now applied in `psi_noise_mc`): 0.667 within 1 sigma, 0.936 within
+2 sigma, rms z 1.074. The calibration windows of rule 3 are therefore centred on these values: 0.62-0.72 within
+1 sigma, 0.91-0.96 within 2 sigma, rms z 0.95-1.25.
+
 ## What the noise uncertainty depends on (first-order chain)
 
 [interpretation, standard error propagation; the Monte Carlo is the measurement] Each step adds its own noise term:
@@ -79,6 +85,7 @@ Smoke test (1 seed, K = 4 realisations, two wavelengths; not a result, a check t
 - dn 20, ker 4: FWHM 16.7 px measured against 16.3 px from the formula; dn 20, ker 1: 14.5 against 14.1; low-k
   transfer at lambda = 128 px 0.92.
 - CATS b1p1 at r = 1: AM 0.88 for dn 20 / ker 4, 0.80 for dn 12 / ker 4, 0.71 for dn 12 / ker 1.
-- Coverage at r = 1, dn 20: random fields 0.71 within 1 sigma (rms z 1.46, heavy tails expected with K = 4);
-  CATS 0.56-0.61 with a mean error of 2 deg, so on MHD cubes with the mask acting the scatter alone may undercount the
-  error. The full run adds sqrt(sigma^2 + offset^2) (Monte Carlo mean shift) as a post hoc variant.
+- Coverage at r = 1, dn 20 (K = 4, before the sqrt(K / (K - 1)) correction, where a calibrated sigma gives 0.55
+  within 1 sigma and rms z is undefined): random fields 0.71, CATS 0.56-0.61. These are pipeline checks only; the
+  CATS value is what a calibrated sigma predicts at K = 4. The full run also scores sqrt(sigma^2 + offset^2)
+  (Monte Carlo mean shift) as a post hoc variant.

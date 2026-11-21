@@ -157,7 +157,7 @@ def main():
             cov1=("cov1", "mean"), cov1_lo=("cov1_lo", "min"), cov1_hi=("cov1_hi", "max"), cov2=("cov2", "mean"),
             rms_z=("rms_z", "mean"), sigma=("median_sigma_deg", "mean"), rms_err=("rms_err_deg", "mean"),
             mean_err=("mean_err_deg", "mean"), offset=("median_offset_deg", "mean"), n=("seed", "count"))
-        lines.append("Uncertainty coverage (target 0.68 / 0.95, rms z 1):")
+        lines.append("Uncertainty coverage (calibrated at K = 16: 0.667 / 0.936, rms z 1.074; Student t, 15 dof):")
         lines.append(g.reset_index().to_string(index=False))
         fig_calibration(mc, a.root)
     txt = "\n".join(lines)
