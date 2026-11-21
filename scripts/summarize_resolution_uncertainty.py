@@ -72,22 +72,25 @@ def fig_transfer(tr, fit, out):
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.2))
     d = tr[(tr.ker == 4) & (tr.rb == 0) & (tr.snr == np.inf)]
     for dn, g in d.groupby("dn"):
-        m = g.groupby("k").T.mean()
+        m = g.groupby("lambda").T.mean()
         ax[0].plot(m.index, m.values, "o-", ms=3, label=f"dn {dn}")
     ax[0].axhline(0.5, color="0.6", lw=0.8)
-    ax[0].set(xscale="log", xlabel="k of the orientation modulation (rad/px)", ylabel="recovered / true amplitude T",
+    lams = sorted(d["lambda"].unique())
+    ax[0].set(xscale="log", xlabel="wavelength of the orientation modulation (px)", ylabel="recovered / true amplitude T",
               title="Transfer function, ker 4, no noise")
+    ax[0].set_xticks(lams, [f"{x:.0f}" for x in lams], fontsize=7)
+    ax[0].minorticks_off()
     ax[0].legend(fontsize=7)
     for ker, mk in ((1, "o"), (2, "s"), (4, "^")):
         f = fit[(fit.ker == ker) & (fit.rb == 0) & (fit.snr == np.inf)].sort_values("dn")
-        ax[1].plot(f.dn, f.fwhm_fit_px, mk + "-", label=f"measured ker {ker}")
+        ax[1].plot(f.dn, f.fwhm_px, mk + "-", label=f"half-transfer ker {ker}")
         ax[1].plot(f.dn, f.fwhm_formula_px, mk + ":", color=ax[1].lines[-1].get_color(), label=f"formula ker {ker}")
-    ax[1].set(xlabel="dn (px)", ylabel="FWHM (px)", title="Effective FWHM, no noise")
+    ax[1].set(xlabel="dn (px)", ylabel="FWHM (px), lambda_half / 2.266", title="Effective FWHM, no noise")
     ax[1].legend(fontsize=7)
     for snr, g in fit[(fit.ker == 4) & (fit.rb == 0)].groupby("snr"):
         g = g.sort_values("dn")
-        ax[2].plot(g.dn, g.fwhm_fit_px, "o-", label=f"r = {snr}")
-    ax[2].set(xlabel="dn (px)", ylabel="FWHM (px)", title="Effective FWHM against S/N, ker 4")
+        ax[2].plot(g.dn, g.fwhm_px, "o-", label=f"r = {snr}")
+    ax[2].set(xlabel="dn (px)", ylabel="FWHM (px), lambda_half / 2.266", title="Effective FWHM against S/N, ker 4")
     ax[2].legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(out, "fig_transfer.png"), dpi=130)
@@ -143,7 +146,9 @@ def main():
     lines = []
     tr, fit = load(a.root, "tf_runs.csv"), load(a.root, "tf_fit.csv")
     if len(fit):
-        lines.append("Effective FWHM (px), rb 0:")
+        if "fwhm_px" not in fit.columns:
+            raise SystemExit("tf_fit.csv predates the half-transfer FWHM; refit with --part fit")
+        lines.append("Effective FWHM (px), rb 0 (fwhm_px = half-transfer, primary; fwhm_gaussfit_px secondary):")
         lines.append(fit[fit.rb == 0].sort_values(["snr", "ker", "dn"]).to_string(index=False))
         fig_transfer(tr, fit, a.root)
     sw = load(a.root, "sweep_runs.csv")

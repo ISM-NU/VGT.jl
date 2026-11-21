@@ -55,6 +55,17 @@ of freedom (after the sqrt(K / (K - 1)) correction now applied in `psi_noise_mc`
 2 sigma, rms z 1.074. The calibration windows of rule 3 are therefore centred on these values: 0.62-0.72 within
 1 sigma, 0.91-0.96 within 2 sigma, rms z 0.95-1.25.
 
+Amendment 2 (2026-11-21, after the full transfer-function run and before the sweep was rerun): the effective FWHM
+of test 1 is the half-transfer one, FWHM = lambda_half * 2 ln 2 / pi (the Gaussian with the same half-transfer
+wavelength), replacing the Gaussian fit. Reason, seen in the data: the box window has a sinc response, and beyond its
+first zero the sidelobes give T = 0.1-0.2 (dn 32 at lambda 21 px: 0.19, dn 48 at 32 px: 0.21), which fall inside the
+0.1-0.95 fit range and pull the fit low. The fit was non-monotonic in dn (dn 20 / ker 1 12.0 px, below dn 16 / ker 1
+12.8 px; dn 32 / ker 4 16.4 px without noise, 26.5 px at r = 0.5), while lambda_half is monotonic and stable with
+S/N. The half-transfer wavelength was one of the two declared outputs; only the choice of primary changed. The
+Gaussian fit stays in `tf_fit.csv` as `fwhm_gaussfit_px`. Because part sweep smooths each map to the targets F from
+this FWHM and rule R2 selects on it, the sweep was rerun with the half-transfer values; the first sweep's R2 lines
+are superseded (its native AM scores do not depend on the FWHM and stand).
+
 ## What the noise uncertainty depends on (first-order chain)
 
 [interpretation, standard error propagation; the Monte Carlo is the measurement] Each step adds its own noise term:

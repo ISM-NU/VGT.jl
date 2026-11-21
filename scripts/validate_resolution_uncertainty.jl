@@ -22,8 +22,13 @@ include(joinpath(@__DIR__, "synthetic_orientation_fields.jl"))
 # Part tf (transfer function): orientation field t = t0 + a sin(2 pi x / lambda) (t0 30 deg, a 15 deg, so the
 #   doubled angle stays in the linear range), lambda = 512/m for m in 2..40 (periodic on the 512 px grid). Recovered
 #   amplitude of the sinusoid in the column-averaged (Stokes) VGT angle over the interior, divided by a: T(k).
-#   A Gaussian exp(-k^2 s^2 / 2) fitted to T between 0.1 and 0.95 gives FWHM = 2.355 s px. The beam is 3 px;
-#   noise is beam-correlated (FWHM 3 px) at S/N r. Every dn and ker, plus rbar2_weight at dn 12, 20, 32.
+#   The effective FWHM is the Gaussian FWHM with the same half-transfer wavelength: FWHM = lambda_half * 2 ln 2 / pi
+#   (= lambda_half / 2.266), lambda_half where T crosses 0.5. A Gaussian exp(-k^2 s^2 / 2) fitted to T between 0.1
+#   and 0.95 (the declared primary estimator) is kept as the secondary column fwhm_gaussfit_px: the box window has a
+#   sinc response whose sidelobes beyond the first zero (T 0.1-0.2) fall inside the fit range and bias it low for
+#   dn >= 20 at ker 1-2 and dn >= 32 (replaced after the full run, docs/validation-resolution-uncertainty.md).
+#   The beam is 3 px; noise is beam-correlated (FWHM 3 px) at S/N r. Every dn and ker, plus rbar2_weight at dn 12,
+#   20, 32.
 # Part sweep (accuracy against effective resolution): random orientation fields (random_tmap, delta 0.8, power
 #   k^-3) and, if --cats-dirs is given, CATS MHD cubes from scripts/synthetic_ppv_from_mhd.jl (ppv.fits,
 #   psi_true.fits, beam 3 px, no noise; noise added here at S/N r with a 3 sigma mask). AM = <cos 2(psi - truth)>
@@ -39,7 +44,7 @@ include(joinpath(@__DIR__, "synthetic_orientation_fields.jl"))
 #   julia --project=. -t 16 scripts/validate_resolution_uncertainty.jl --part tf|sweep|mc --out DIR
 #       [--seeds 3] [--snr Inf,2,1,0.5] [--dn 8,12,16,20,32,48] [--ker 1,2,4] [--targets 10.5,15,21,30]
 #       [--cats-dirs DIR1,DIR2] [--tf-fit DIR/tf_fit.csv] [--realizations 16] [--quick 1]
-# Writes DIR/<part>_runs.csv (and tf_fit.csv for part tf).
+# Writes DIR/<part>_runs.csv (and tf_fit.csv for part tf). --part fit refits DIR/tf_runs.csv into DIR/tf_fit.csv.
 
 const N = 512
 const BEAM = 3.0
@@ -153,6 +158,35 @@ function part_tf(o)
     fit_tf(path, joinpath(o["out"], "tf_fit.csv"))
 end
 
+"""
+    half_transfer(ks, T) -> (lambda_half, fwhm)
+
+Wavelength (px) where the transfer T(k), sampled at increasing k, first falls through 0.5 (log-linear interpolation
+in wavelength), and the Gaussian FWHM with the same half-transfer point, lambda_half * 2 ln 2 / pi. Only the first
+crossing counts, so sinc sidelobes at higher k do not move it. NaN if T never crosses 0.5.
+"""
+function half_transfer(ks::AbstractVector, T::AbstractVector)
+    issorted(ks) || throw(ArgumentError("ks must be increasing"))
+    lam = 2pi ./ ks
+    for i in 1:(length(ks) - 1)
+        if T[i] >= 0.5 && T[i + 1] < 0.5
+            f = (0.5 - T[i]) / (T[i + 1] - T[i])
+            lh = exp(log(lam[i]) + f * (log(lam[i + 1]) - log(lam[i])))
+            return lh, lh * 2log(2) / pi
+        end
+    end
+    return NaN, NaN
+end
+
+"Gaussian FWHM fitted to log T between 0.1 and 0.95 (secondary; biased by box sidelobes, see the header)."
+function gaussfit_fwhm(ks::AbstractVector, T::AbstractVector)
+    sel = (T .> 0.1) .& (T .< 0.95)
+    count(sel) >= 2 || return NaN
+    X = hcat(-ks[sel] .^ 2 ./ 2, ones(count(sel)))
+    β = X \ log.(T[sel])
+    return β[1] > 0 ? sqrt(8log(2)) * sqrt(β[1]) : NaN
+end
+
 function fit_tf(runs, out)
     lines = readlines(runs)[2:end]
     rows = [split(l, ",") for l in lines]
@@ -162,32 +196,18 @@ function fit_tf(runs, out)
         push!(get!(groups, key, Tuple{Float64, Float64}[]), (parse(Float64, r[7]), parse(Float64, r[10])))
     end
     open(out, "w") do io
-        println(io, "dn,ker,rb,snr,fwhm_fit_px,fwhm_formula_px,lambda_half_px,T_lowk,npoints")
+        # Column 5 (fwhm_px, half-transfer) is what part sweep reads as the measured FWHM.
+        println(io, "dn,ker,rb,snr,fwhm_px,fwhm_gaussfit_px,fwhm_formula_px,lambda_half_px,T_lowk,npoints")
         for key in sort(collect(keys(groups)))
             pts = groups[key]
             ks = sort(unique(first.(pts)))
             T = [mean(last.(filter(p -> p[1] == k, pts))) for k in ks]
-            sel = (T .> 0.1) .& (T .< 0.95)
-            fw = NaN
-            if count(sel) >= 2
-                X = hcat(-ks[sel] .^ 2 ./ 2, ones(count(sel)))
-                β = X \ log.(T[sel])
-                fw = β[1] > 0 ? sqrt(8log(2)) * sqrt(β[1]) : NaN
-            end
-            # Wavelength where T crosses 0.5 (log-linear interpolation in lambda).
-            lam = 2pi ./ ks
-            lh = NaN
-            for i in 1:(length(ks) - 1)
-                if (T[i] - 0.5) * (T[i + 1] - 0.5) <= 0 && T[i] != T[i + 1]
-                    f = (0.5 - T[i]) / (T[i + 1] - T[i])
-                    lh = exp(log(lam[i]) + f * (log(lam[i + 1]) - log(lam[i])))
-                    break
-                end
-            end
+            lh, fw = half_transfer(ks, T)
+            gf = gaussfit_fwhm(ks, T)
             dn, ker = key[1], key[2]
             formula = sqrt(8log(2)) * sqrt(dn^2 / 12 + ker_std(ker)^2 + (BEAM / sqrt(8log(2)))^2)
-            @printf(io, "%d,%d,%d,%s,%.3f,%.3f,%.3f,%.4f,%d\n", dn, ker, key[3], key[4], fw, formula, lh, T[1],
-                    count(sel))
+            @printf(io, "%d,%d,%d,%s,%.3f,%.3f,%.3f,%.3f,%.4f,%d\n", dn, ker, key[3], key[4], fw, gf, formula, lh, T[1],
+                    count((T .> 0.1) .& (T .< 0.95)))
         end
     end
 end
@@ -196,7 +216,11 @@ end
 function read_tf_fit(path)
     d = Dict{Tuple{Int, Int, Int}, Float64}()
     isempty(path) && return d
-    for l in readlines(path)[2:end]
+    ls = readlines(path)
+    # Old files (before the half-transfer change) carry the sidelobe-biased Gaussian fit in column 5; refuse them.
+    split(ls[1], ",")[5] == "fwhm_px" ||
+        throw(ArgumentError("$path has no half-transfer fwhm_px column; refit it with --part fit"))
+    for l in ls[2:end]
         r = split(l, ",")
         r[4] == "Inf" || continue
         d[(parse(Int, r[1]), parse(Int, r[2]), parse(Int, r[3]))] = parse(Float64, r[5])
@@ -376,4 +400,7 @@ function main(args)
     o["part"] == "fit" && fit_tf(joinpath(o["out"], "tf_runs.csv"), joinpath(o["out"], "tf_fit.csv"))
 end
 
-main(ARGS)
+# Guarded so tests can include the file for its functions without running a part.
+if abspath(PROGRAM_FILE) == @__FILE__
+    main(ARGS)
+end

@@ -19,4 +19,5 @@ using Test
     include("chunk_seams.jl")
     include("angle_calibration.jl")
     include("uncertainty.jl")
+    include("resolution_transfer.jl")
 end
