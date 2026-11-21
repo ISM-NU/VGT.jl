@@ -28,6 +28,30 @@ resultant(a) = abs(mean(cis.(2 .* a)))
         @test isapprox(mean(real.(za .* conj.(zb))), rt^2; atol=0.01)
     end
 
+    # A fixed beam of noise-free angles (its own coherence R_t) observed twice with
+    # independent angle errors: the split estimator recovers R_t, floor
+    # subtraction falls below it, the plain cross product is attenuated.
+    nb, npx = 400, 64
+    for (rt, κ) in ((0.4, 1.0), (0.8, 2.0), (0.95, 0.5))
+        ok_split, ok_db, rx, rs = 0, 0, Float64[], Float64[]
+        for t in 1:nb
+            truth = mixture_angles(rng, npx, rt)
+            Rt = resultant(truth)
+            err() = [atan(κ * randn(rng)) / 2 * 2 for _ in 1:npx]   # heavy-tailed axial errors
+            a = truth .+ err() ./ 2
+            b = truth .+ err() ./ 2
+            za, zb = mean(cis.(2 .* a)), mean(cis.(2 .* b))
+            g2 = mean(cos.(2 .* (a .- b)))
+            push!(rs, real(za * conj(zb)) / g2 - Rt^2)
+            push!(rx, real(za * conj(zb)) - Rt^2)
+        end
+        @test abs(mean(rs)) < 0.03                # split: unbiased for the beam's own R_t^2
+        @test mean(rx) < -0.01 || κ < 0.6         # cross product alone: attenuated
+    end
+    S = split_coherence(fill(0.2, 60, 60), fill(0.2, 60, 60), 6.0)
+    @test all(x -> isnan(x) || isapprox(x, 1.0; atol=1e-12), S.R)
+    @test all(x -> isnan(x) || isapprox(x, 1.0; atol=1e-12), S.g2)
+
     # floor from a pure-noise angle map: f^2 ~ 1 / (independent angles per beam)
     psi = π .* (rand(MersenneTwister(3), 200, 200) .- 0.5)
     fwhm = 8.0

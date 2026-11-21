@@ -167,18 +167,35 @@ end
 # ---------------------------------------------------------------------------
 # Noise-debiased coherence (opt-in helpers; no production output uses them).
 #
-# A coherence R = |mean exp(2i psi)| over a beam is a resultant length of unit
-# phasors, so, like a polarization fraction, it is biased up by noise: pure
-# noise gives R at a floor of about 1/sqrt(N_eff), N_eff the number of
-# independent angles in the beam, not 0 (Montier et al. 2015a, A&A 574, A135,
-# for the polarization analogue). With independent angle errors,
-# E[R^2] = R_t^2 (1 - f^2) + f^2 with f^2 = E[R^2] of pure noise, so
-# (R^2 - f^2) / (1 - f^2) is unbiased for R_t^2. VGT angles are correlated over
-# the window (dn) and the Q/U smoothing (ker), so f^2 is measured on a
-# pure-noise run with the same settings, not computed from the pixel count.
-# The subtraction removes the floor only; the loss of coherence from noisy
-# angles (depolarization) is not undone. See docs/validation-coherence-debias.md.
+# A coherence R = |<exp(2i psi)>| over a beam is a resultant length of unit
+# phasors, so, like a polarization fraction, it is biased by noise (Montier et
+# al. 2015a, A&A 574, A135, for the polarization analogue). Write each VGT
+# angle as the noise-free angle plus an independent error with attenuation
+# g = E[exp(2i delta)], and let R_t be the coherence of the noise-free angles in
+# the same beam (what the dust in that beam sees). Then, with f^2 = E[R^2] of
+# pure noise (1 / N_eff independent angles per beam):
+#   E[R^2]                    = g^2 R_t^2 + (1 - g^2) f^2
+#   E[Re(z_a conj z_b)]       = g_a g_b R_t^2   (two independent noise realizations)
+#   E[<cos 2(psi_a - psi_b)>] = g_a g_b         (per-pixel angle agreement)
+# so split_coherence's ratio of the last two estimates R_t^2 without a noise
+# model. Plain floor subtraction (debias_coherence) assumes g = 0 for the noise
+# term and g = 1 for the signal; it is exact only for i.i.d. phasors and
+# otherwise a lower bound on R_t (it also lowers a noise-free R).
+# See docs/validation-coherence-debias.md.
 # ---------------------------------------------------------------------------
+
+function _beam_mean(re::AbstractMatrix, im::AbstractMatrix, ok::AbstractMatrix{Bool}, fwhm_px::Real)
+    fwhm_px > 0 || throw(ArgumentError("fwhm_px must be positive; got $fwhm_px"))
+    k = Kernel.gaussian(fwhm_px / (2 * sqrt(2 * log(2))))
+    w = Float64.(ok)
+    rs, is_, ws = (imfilter(a, k, Fill(0.0)) for a in (re .* w, im .* w, w))
+    full = imfilter(ones(size(re)), k, Fill(0.0))
+    z = Matrix{ComplexF64}(undef, size(re))
+    @inbounds for i in eachindex(z)
+        z[i] = (ok[i] && ws[i] >= 0.5 * full[i]) ? complex(rs[i], is_[i]) / ws[i] : complex(NaN, NaN)
+    end
+    return z
+end
 
 """
     coherence_phasor(psi, fwhm_px) -> Matrix{ComplexF64}
@@ -190,30 +207,20 @@ less than half of the full kernel weight, or whose own angle is NaN, are NaN.
 `abs` of the result is the beam coherence R.
 """
 function coherence_phasor(psi::AbstractMatrix, fwhm_px::Real)
-    fwhm_px > 0 || throw(ArgumentError("fwhm_px must be positive; got $fwhm_px"))
     ok = isfinite.(psi)
-    c = [ok[i] ? cos(2 * psi[i]) : 0.0 for i in eachindex(psi)]
-    s = [ok[i] ? sin(2 * psi[i]) : 0.0 for i in eachindex(psi)]
-    c, s, w = reshape(c, size(psi)), reshape(s, size(psi)), Float64.(ok)
-    k = Kernel.gaussian(fwhm_px / (2 * sqrt(2 * log(2))))
-    # Fill("0") treats outside the map as missing; the weight map renormalises.
-    cs, ss, ws = (imfilter(a, k, Fill(0.0)) for a in (c, s, w))
-    full = imfilter(ones(size(psi)), k, Fill(0.0))
-    z = Matrix{ComplexF64}(undef, size(psi))
-    @inbounds for i in eachindex(z)
-        z[i] = (ok[i] && ws[i] >= 0.5 * full[i]) ? complex(cs[i], ss[i]) / ws[i] : complex(NaN, NaN)
-    end
-    return z
+    p0 = ifelse.(ok, psi, 0.0)
+    return _beam_mean(cos.(2 .* p0), sin.(2 .* p0), ok, fwhm_px)
 end
 
 """
     coherence_floor2(psi_noise, fwhm_px; mask=trues(size(psi_noise))) -> Float64
 
 Noise floor `f^2 = E[R^2]` of the beam coherence on a VGT angle map of pure
-noise (same `dn`, `ker`, stencil and beam as the map to be debiased; e.g.
+noise (same `dn`, `ker`, stencil and beam as the map it is compared with; e.g.
 emission-free channels plus a constant offset so the intensity mask never
-acts). Averaged over finite pixels inside `mask`. `1 / f^2` is the effective
-number of independent angles per beam.
+acts), averaged over finite pixels inside `mask`. `1 / f^2` is the effective
+number of independent angles per beam; VGT angles are correlated over the
+window, so it is far below the pixel count.
 """
 function coherence_floor2(psi_noise::AbstractMatrix, fwhm_px::Real; mask::AbstractMatrix{Bool}=trues(size(psi_noise)))
     size(mask) == size(psi_noise) || throw(ArgumentError("mask size must match psi_noise"))
@@ -226,9 +233,10 @@ end
 """
     debias_coherence(R, floor2) -> same shape as R
 
-Floor-subtracted coherence `sqrt(max(R^2 - f^2, 0) / (1 - f^2))`, unbiased for
-`R_t^2` when the angle errors are independent of the signal (see the comment
-block above). `floor2` is a scalar or an array like `R`, with `0 <= f^2 < 1`.
+Floor-subtracted coherence `sqrt(max(R^2 - f^2, 0) / (1 - f^2))`. Unbiased for
+the expected-phasor coherence of i.i.d. angles; for VGT maps it is a lower
+bound on the noise-free beam coherence (see the comment block above), kept as
+a cheap diagnostic. `floor2` is a scalar or an array like `R`, `0 <= f^2 < 1`.
 NaN stays NaN.
 """
 function debias_coherence(R::AbstractArray, floor2)
@@ -240,15 +248,35 @@ debias_coherence(R::Real, floor2::Real) = debias_coherence([R], floor2)[1]
 """
     cross_coherence(z_a, z_b) -> real array
 
-Coherence from two maps of the same sky with independent noise (two noise
-realizations, two halves of the channels): `sqrt(max(Re(z_a conj(z_b)), 0))`
-with `z_a`, `z_b` from `coherence_phasor`. Needs no noise model: the noise
-terms of the product average to zero. It measures the coherence of each half's
-expected phasor, so with halves noisier than the full map it also carries their
-larger depolarization. Correlated noise between the halves (e.g. spectral
-correlation between neighbouring channels) biases it up.
+`sqrt(max(Re(z_a conj(z_b)), 0))` for beam phasors of two maps of the same sky
+with independent noise. Free of the noise floor, but attenuated: it estimates
+`sqrt(g_a g_b) R_t`, so it is low where the angles are noisy.
 """
 function cross_coherence(z_a::AbstractArray{<:Complex}, z_b::AbstractArray{<:Complex})
     size(z_a) == size(z_b) || throw(ArgumentError("z_a and z_b must have the same size"))
     return @. sqrt(max(real(z_a * conj(z_b)), 0.0))
+end
+
+"""
+    split_coherence(psi_a, psi_b, fwhm_px; gmin=0.05) -> (; R, g2)
+
+Noise-free beam coherence from two VGT angle maps of the same sky with
+independent noise (two noise realizations, or two halves of the channels):
+`R = sqrt(Re(z_a conj z_b) / g2)` with `z` the beam phasors and
+`g2 = <cos 2(psi_a - psi_b)>` over the same beam, the product of the two maps'
+angle attenuations. Needs no noise model. NaN where `g2 < gmin` (angles too
+noisy to correct); can exceed 1 by noise, not clipped. Correlated noise between
+the two maps (e.g. spectral correlation between neighbouring channels) biases
+both the numerator and `g2` up and partly cancels.
+"""
+function split_coherence(psi_a::AbstractMatrix, psi_b::AbstractMatrix, fwhm_px::Real; gmin::Real=0.05)
+    size(psi_a) == size(psi_b) || throw(ArgumentError("psi_a and psi_b must have the same size"))
+    ok = isfinite.(psi_a) .& isfinite.(psi_b)
+    a0, b0 = ifelse.(ok, psi_a, 0.0), ifelse.(ok, psi_b, 0.0)
+    za = _beam_mean(cos.(2 .* a0), sin.(2 .* a0), ok, fwhm_px)
+    zb = _beam_mean(cos.(2 .* b0), sin.(2 .* b0), ok, fwhm_px)
+    g2 = real.(_beam_mean(cos.(2 .* (a0 .- b0)), zeros(size(a0)), ok, fwhm_px))
+    num = real.(za .* conj.(zb))
+    R = @. ifelse(isfinite(g2) & (g2 >= gmin), sqrt(max(num, 0.0) / g2), NaN)
+    return (; R, g2)
 end
