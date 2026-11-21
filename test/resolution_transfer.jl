@@ -23,6 +23,9 @@ Base.include(RES, joinpath(@__DIR__, "..", "scripts", "validate_resolution_uncer
         @test lh ≈ pi * dn / 1.8955 rtol = 0.06             # sinc(x) = 0.5 at x = 1.8955
         @test fw > RES.gaussfit_fwhm(ks, T) || dn < 32      # the Gaussian fit is pulled low by the sidelobes
     end
+    # Half the plateau: a Gaussian scaled by 0.94 crosses 0.47 where the unscaled one crosses 0.5.
+    s16 = 16 / sqrt(8log(2))
+    @test RES.half_transfer(ks, 0.94 .* exp.(-ks .^ 2 .* s16^2 ./ 2); level=0.47)[2] ≈ 16 rtol = 0.06
     @test all(isnan, RES.half_transfer([0.1, 0.2], [0.9, 0.8]))
     @test_throws ArgumentError RES.half_transfer([0.2, 0.1], [0.9, 0.1])
 end

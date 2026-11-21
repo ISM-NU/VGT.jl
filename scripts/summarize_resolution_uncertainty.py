@@ -59,7 +59,8 @@ def rules(sw, out):
             if ((tied.dn == PROD[0]) & (tied.ker == PROD[1]) & (tied.rb == PROD[2])).any():
                 p = tied[(tied.dn == PROD[0]) & (tied.ker == PROD[1]) & (tied.rb == PROD[2])].iloc[0]
             else:
-                p = tied.sort_values(["dn", "fwhm"]).iloc[0]
+                # Declared tie-break (as R1): the smallest FWHM among the tied; dn only orders exact FWHM ties.
+                p = tied.sort_values(["fwhm", "dn"]).iloc[0]
             pv = prod[c].iloc[0] if len(prod) and prod.fwhm.iloc[0] <= F + 1e-9 else np.nan
             lines.append(f"R2 {field} r={snr} F={F}: best dn{int(b.dn)} ker{int(b.ker)} rb{int(b.rb)} {b[c]:.4f}; "
                          f"chosen dn{int(p.dn)} ker{int(p.ker)} rb{int(p.rb)} {p[c]:.4f}; production {pv:.4f}; "

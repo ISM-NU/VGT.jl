@@ -159,18 +159,19 @@ function part_tf(o)
 end
 
 """
-    half_transfer(ks, T) -> (lambda_half, fwhm)
+    half_transfer(ks, T; level=0.5) -> (lambda_half, fwhm)
 
-Wavelength (px) where the transfer T(k), sampled at increasing k, first falls through 0.5 (log-linear interpolation
-in wavelength), and the Gaussian FWHM with the same half-transfer point, lambda_half * 2 ln 2 / pi. Only the first
-crossing counts, so sinc sidelobes at higher k do not move it. NaN if T never crosses 0.5.
+Wavelength (px) where the transfer T(k), sampled at increasing k, first falls through `level` (log-linear
+interpolation in wavelength), and the Gaussian FWHM with the same half-transfer point, lambda_half * 2 ln 2 / pi.
+Only the first crossing counts, so sinc sidelobes at higher k do not move it. NaN if T never crosses `level`.
+`level = T[1] / 2` (half the low-k plateau) gives the lower bound written as fwhm_halfplateau_px.
 """
-function half_transfer(ks::AbstractVector, T::AbstractVector)
+function half_transfer(ks::AbstractVector, T::AbstractVector; level::Real=0.5)
     issorted(ks) || throw(ArgumentError("ks must be increasing"))
     lam = 2pi ./ ks
     for i in 1:(length(ks) - 1)
-        if T[i] >= 0.5 && T[i + 1] < 0.5
-            f = (0.5 - T[i]) / (T[i + 1] - T[i])
+        if T[i] >= level && T[i + 1] < level
+            f = (level - T[i]) / (T[i + 1] - T[i])
             lh = exp(log(lam[i]) + f * (log(lam[i + 1]) - log(lam[i])))
             return lh, lh * 2log(2) / pi
         end
@@ -197,17 +198,19 @@ function fit_tf(runs, out)
     end
     open(out, "w") do io
         # Column 5 (fwhm_px, half-transfer) is what part sweep reads as the measured FWHM.
-        println(io, "dn,ker,rb,snr,fwhm_px,fwhm_gaussfit_px,fwhm_formula_px,lambda_half_px,T_lowk,npoints")
+        println(io, "dn,ker,rb,snr,fwhm_px,fwhm_gaussfit_px,fwhm_formula_px,lambda_half_px,T_lowk,npoints," *
+                    "fwhm_halfplateau_px")
         for key in sort(collect(keys(groups)))
             pts = groups[key]
             ks = sort(unique(first.(pts)))
             T = [mean(last.(filter(p -> p[1] == k, pts))) for k in ks]
             lh, fw = half_transfer(ks, T)
             gf = gaussfit_fwhm(ks, T)
+            _, fp = half_transfer(ks, T; level=T[1] / 2)   # T levels off near 0.94, not 1: lower bound
             dn, ker = key[1], key[2]
             formula = sqrt(8log(2)) * sqrt(dn^2 / 12 + ker_std(ker)^2 + (BEAM / sqrt(8log(2)))^2)
-            @printf(io, "%d,%d,%d,%s,%.3f,%.3f,%.3f,%.3f,%.4f,%d\n", dn, ker, key[3], key[4], fw, gf, formula, lh, T[1],
-                    count((T .> 0.1) .& (T .< 0.95)))
+            @printf(io, "%d,%d,%d,%s,%.3f,%.3f,%.3f,%.3f,%.4f,%d,%.3f\n", dn, ker, key[3], key[4], fw, gf, formula, lh,
+                    T[1], count((T .> 0.1) .& (T .< 0.95)), fp)
         end
     end
 end

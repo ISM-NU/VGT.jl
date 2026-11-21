@@ -86,11 +86,34 @@ are superseded (its native AM scores do not depend on the FWHM and stand).
    why the error is measured by Monte Carlo rather than from the formula.
 
 So sigma_psi is largest where the gas is faint (small |g| / sigma_n), where gradients in a window disagree (low
-coherence), and where few channels carry signal; it shrinks as 1/dn at fixed S/N, which is the resolution cost.
+coherence), and where few channels carry signal. It shrinks with dn at fixed S/N, which is the resolution cost:
+the first-order chain suggests 1/dn, but the measured noise error falls about as dn^-0.6 (random fields, r = 1: rms
+12.8, 9.4, 7.1 deg for dn 12, 20, 32), probably because the fixed `ker` smoothing adds relatively more averaging to
+small windows [interpretation].
 
 ## Results
 
-Pending (cluster jobs queued 2026-11-21, Slurm start estimates 2026-11-22 morning).
+[data] Full runs finished 2026-11-21: transfer function 3 seeds, sweep 4 seeds (rerun after amendment 2), Monte
+Carlo 3 seeds, K = 16. Synthetic and MHD only; the LMC application is in the experiment repository.
+
+- Effective FWHM (half-transfer, r = Inf; lower value at half the low-k plateau of about 0.94): dn 8 / ker 4
+  10.0-10.4 px, dn 12 / ker 4 11.8-12.2, dn 16 / ker 4 13.6-14.1, dn 20 / ker 1 14.1-14.7, dn 20 / ker 4
+  16.1-16.7, dn 32 / ker 4 23.9-25.0, dn 48 / ker 4 34.2-36.4. The formula is within 10 % everywhere (within 3 % at
+  dn 20 / ker 4), so it passes the 15 % test. S/N changes the FWHM by less than 1 px except dn 48 at r = 0.5.
+- Native AM (ker 4, dn 8/12/16/20/32/48): random fields r = 1 0.859/0.890/0.911/0.923/0.934/0.928, r = 2
+  0.934/0.940/0.945/0.946/0.940/0.925; CATS b1p1 r = 1 0.738/0.787/0.830/0.865/0.928/0.959. On native AM dn 32 /
+  ker 4 passes the adoption rule at r = 1 (random fields +0.0102, CATS b1p1 +0.063) and dn 32 / dn 48 at r = 0.5;
+  nothing passes at r >= 2. The trade is resolution (25 against 16.7 px).
+- R2 at 21 and 30 px: dn 20 / ker 4 is chosen or tied on the random fields at every r and on CATS b1p1 at
+  r = 0.5-2; the adoption rule finds nothing at r >= 1. At 10.5 and 15 px dn 20 / ker 4 is not eligible; the declared
+  tie-break (smallest FWHM) picks dn 8-12 settings on the random fields and dn 16 / ker 4 on CATS b1p1 at 15 px (r >= 1).
+- Calibration (dn 20, scale 1, within 1 / 2 sigma): random fields r = 4 0.668/0.938, r = 2 0.747/0.968, r = 1
+  0.845/0.988; CATS b1p1 r = 4 0.484/0.776, r = 2 0.482/0.787, r = 1 0.663/0.917. The amended window is met in 2
+  of the 6 regimes (1 of 6 under the original 0.92-0.98 two-sigma window, which CATS r = 1 misses at 0.917); rms z
+  is in 0.95-1.25 in the same 2. sigma_psi is conservative on the random fields at r <= 2 and about 1.5x too small
+  on CATS at r >= 2. Scale 0.5 is closer by the summed distance from 0.667 (0.61 against 0.63) and in rms z, so by
+  rule 3 it is the default.
+
 
 Smoke test (1 seed, K = 4 realisations, two wavelengths; not a result, a check that the pipeline works):
 - dn 20, ker 4: FWHM 16.7 px measured against 16.3 px from the formula; dn 20, ker 1: 14.5 against 14.1; low-k
