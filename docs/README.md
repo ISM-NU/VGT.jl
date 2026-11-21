@@ -18,6 +18,9 @@ evidence, or reference).
 - `validation-angle-calibration.md` — grid-locked angle bias of the gradient
   stencils on synthetic fields with known angles, and the opt-in
   `isotropic_checked` stencil. Validation evidence.
+- `validation-resolution-uncertainty.md` — effective resolution of the angle
+  map against `dn` and `ker`, window choice by declared rules, and the opt-in
+  Monte Carlo noise uncertainty `psi_noise_mc`. Validation evidence, in progress.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.
