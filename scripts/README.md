@@ -72,6 +72,13 @@ they do not replace the script-specific FITS, text, or CSV outputs.
   and on rotated CATS MHD cubes, with the harmonic fit A4 sin(4t) + A8 sin(8t);
   `--quick 1` is a smoke test. Results: `docs/validation-angle-calibration.md`.
 
+`validate_coherence_debias.jl`
+: Noise in the beam coherence |<exp(2i psi)>| of VGT angle maps: raw coherence,
+  floor subtraction (`debias_coherence`), cross product and the split estimator
+  (`split_coherence`, two independent noise realizations corrected for angle
+  attenuation) against the noiseless VGT map, on a ramp-to-random-field mixture
+  with isotropic and anisotropic correlated noise. Run on the cluster.
+
 `validate_gradient_whitening.jl`
 : Opt-in gradient whitening (`gradient_whiten`) against correlated, slightly
   anisotropic noise: angle bias toward the noise direction, scatter and coverage on

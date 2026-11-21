@@ -28,8 +28,8 @@ quickactivate(@__DIR__, "VGT")
 # floor subtraction is a lower bound, still before any run): the split
 # estimator passes if its median error |R_s - R_true| is at most 0.03 in every
 # R_true bin at S/N >= 1, and at most half the raw error where R_true < 0.5 at
-# S/N <= 1. Expected: R_db biased low where R_true is high (about -0.04 near
-# 0.85 with f^2 = 0.2), R_x low wherever angles are noisy.
+# S/N <= 1. Expected: R_db biased low where R_true is high, R_x low wherever
+# angles are noisy.
 #
 # Environment: VGT_CD_SIZE (256), VGT_CD_NV (8), VGT_CD_SEEDS (3).
 # Run (cluster): julia --project=. --threads=16 scripts/validate_coherence_debias.jl

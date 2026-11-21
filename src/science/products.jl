@@ -181,7 +181,7 @@ end
 # model. Plain floor subtraction (debias_coherence) assumes g = 0 for the noise
 # term and g = 1 for the signal; it is exact only for i.i.d. phasors and
 # otherwise a lower bound on R_t (it also lowers a noise-free R).
-# See docs/validation-coherence-debias.md.
+# Synthetic validation: scripts/validate_coherence_debias.jl.
 # ---------------------------------------------------------------------------
 
 function _beam_mean(re::AbstractMatrix, im::AbstractMatrix, ok::AbstractMatrix{Bool}, fwhm_px::Real)
@@ -277,6 +277,7 @@ function split_coherence(psi_a::AbstractMatrix, psi_b::AbstractMatrix, fwhm_px::
     zb = _beam_mean(cos.(2 .* b0), sin.(2 .* b0), ok, fwhm_px)
     g2 = real.(_beam_mean(cos.(2 .* (a0 .- b0)), zeros(size(a0)), ok, fwhm_px))
     num = real.(za .* conj.(zb))
-    R = @. ifelse(isfinite(g2) & (g2 >= gmin), sqrt(max(num, 0.0) / g2), NaN)
+    # a branch, not ifelse: ifelse evaluates sqrt also where g2 < 0
+    R = map((n, g) -> (isfinite(g) && g >= gmin) ? sqrt(max(n, 0.0) / g) : NaN, num, g2)
     return (; R, g2)
 end
