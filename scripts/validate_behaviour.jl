@@ -56,6 +56,8 @@ using Statistics
 #   edges    survey edge (half plane) across or along the mean field: NaN outside with the
 #            smoothing cut at 0.5 or 0.99, NaN applied after smoothing, zero outside, and a
 #            noise rise toward the edge with a scalar or per-pixel threshold; edge_mask off/on
+#   wsplit   split-data reproducibility (odd/even, gap halves) of the default, square-root and
+#            uniform Stokes weights, against their accuracy
 #   seams    one region where a block of channels (blue line wing holding 15 % of the flux,
 #            or a quarter of the channels around the peak) fades by a gain g over
 #            a ramp of L px, or is NaN; T_seam = <cos 2(psi - seam tangent)> minus the same
@@ -439,6 +441,33 @@ function exp_weights(io, v, seed, snrs)
     end
 end
 
+# Does split-data reproducibility rank the Stokes weightings as their accuracy does?
+function exp_wsplit(io, v, seed, snrs)
+    nx, ny, nv = size(v.sig)
+    s2 = chain2(v.sig)
+    n2 = chain2(make_noise(MersenneTwister(1000seed + 10), nx, ny, nv; grain=3.0, lag1=0.25))
+    sel = evalmask(size(s2, 1))
+    halves = Dict("oddeven" => (1:2:nv, 2:2:nv), "gap" => (1:4:nv, 3:4:nv))
+    for snr in snrs
+        sigma = v.peak / snr
+        cube = s2 .+ sigma .* n2
+        t = sigma * std(n2)
+        wts = Dict("I" => (nothing, t), "sqrtI" => (sqrt.(max.(cube, 0.0)), sqrt(t)), "unif" => (Float64.(cube .>= t), 0.5))
+        for (wname, (w, tt)) in wts
+            full = vgt(cube, tt; weight=w)
+            emit(io, "wsplit", "$(wname)_full", snr, v.name, seed, score_nt(full, v, sel))
+            for (hname, (h1, h2)) in halves
+                sub(a, h) = a === nothing ? nothing : a[:, :, h]
+                r1 = vgt(cube[:, :, h1], tt; weight=sub(w, h1))
+                r2 = vgt(cube[:, :, h2], tt; weight=sub(w, h2))
+                emit(io, "wsplit", "$(wname)_$(hname)", snr, v.name, seed,
+                     (; AM_h1=score(r1.psi, v.tq2, v.tu2, sel).AM, AM_h2=score(r2.psi, v.tq2, v.tu2, sel).AM,
+                      R12=am_pair(r1.psi, r2.psi, sel)))
+            end
+        end
+    end
+end
+
 function exp_support(io, v, seed, snrs)
     nx, ny, nv = size(v.sig)
     s2 = chain2(v.sig)
@@ -620,6 +649,7 @@ const EXPS = Dict(
     "dn" => (exp_dn, (4.0, 16.0), VIEWS_SUB),
     "edges" => (exp_edges, (8.0, 64.0), VIEWS_SUB),
     "seams" => (exp_seams, (8.0, 64.0), VIEWS_SUB),
+    "wsplit" => (exp_wsplit, (4.0, 16.0, 64.0), vcat(VIEWS_SUB, VIEWS_STR)),
 )
 
 function main(args)

@@ -19,7 +19,7 @@ set -euo pipefail
 cd "$VGT_REPO"
 export JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$VGT_REPO/.julia-irgetas}"
 threads="${SLURM_CPUS_PER_TASK:-1}"
-exps=(noise split chains thr weights support dn edges seams)
+exps=(noise split chains thr weights support dn edges seams wsplit)
 out=validation_output/behaviour
 if [ "${QUICK:-0}" = 1 ]; then
     for e in "${exps[@]}"; do
