@@ -72,6 +72,18 @@ they do not replace the script-specific FITS, text, or CSV outputs.
   and on rotated CATS MHD cubes, with the harmonic fit A4 sin(4t) + A8 sin(8t);
   `--quick 1` is a smoke test. Results: `docs/validation-angle-calibration.md`.
 
+`validate_behaviour.jl`
+: Behaviour study on CATS MHD cubes with a known field: noise type and channel
+  correlation, threshold and min_valid, Stokes weights, smoothing before VGT against
+  Q/U smoothing after (with whitening), window size, split-data reproducibility,
+  survey edges with and without `edge_mask`, and mosaic seams. One experiment per
+  `--exp`; metrics declared in the header; long-format CSV output. Slurm driver
+  `hpc/irgetas/behaviour.slurm`. Results: `docs/validation-behaviour-2026-11-22.md`.
+
+`summarize_behaviour.py`
+: Mean and standard error over field views and noise seeds of the CSV files written
+  by `validate_behaviour.jl`.
+
 `validate_gradient_whitening.jl`
 : Opt-in gradient whitening (`gradient_whiten`) against correlated, slightly
   anisotropic noise: angle bias toward the noise direction, scatter and coverage on

@@ -18,6 +18,11 @@ evidence, or reference).
 - `validation-angle-calibration.md` — grid-locked angle bias of the gradient
   stencils on synthetic fields with known angles, and the opt-in
   `isotropic_checked` stencil. Validation evidence.
+- `validation-behaviour-2026-11-22.md` — pipeline map (what each stage assumes
+  about noise, NaNs and resolution) and synthetic MHD measurements of noise type,
+  channel correlation, thresholds, Stokes weights, smoothing before against after,
+  whitening, split-data reproducibility, survey edges, `edge_mask` and mosaic seams.
+  Validation evidence.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.
