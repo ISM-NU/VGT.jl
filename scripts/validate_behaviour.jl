@@ -49,14 +49,15 @@ using Statistics
 #            ker 8 = the same sky kernel, and ker 9 = about the same total resolution), smoothing without binning, and gradient whitening on both grids
 #   thr      noise threshold multiplier (none, 0.5, 1, 2, 3) and min_valid (50..200)
 #   weights  Stokes weight of a window: centre intensity (default), clipped at 0, squared,
-#            uniform
+#            square root, uniform (1 where the centre passes the threshold)
 #   support  output support and zero-Stokes policies, and the error of filled pixels
 #            against their distance from the nearest direct fit
 #   dn       window size 12, 20, 32 (min_valid dn^2 / 4)
 #   edges    survey edge (half plane) across or along the mean field: NaN outside with the
 #            smoothing cut at 0.5 or 0.99, NaN applied after smoothing, zero outside, and a
 #            noise rise toward the edge with a scalar or per-pixel threshold; edge_mask off/on
-#   seams    one region where a block of channels (line wing or core) fades by a gain g over
+#   seams    one region where a block of channels (blue line wing holding 15 % of the flux,
+#            or a quarter of the channels around the peak) fades by a gain g over
 #            a ramp of L px, or is NaN; T_seam = <cos 2(psi - seam tangent)> minus the same
 #            pixels without the seam
 #
@@ -69,7 +70,7 @@ const TARGET = 6.0                  # chain2 beam FWHM on the native grid (px)
 const KER_FWHM = sqrt(TARGET^2 - BEAM^2)
 const PROD_FWHM = 16.0              # T_prod smoothing on the analysis grid (px)
 const BORDER = 16                   # evaluation border on the analysis grid (px)
-const VIEWS_SUB = [("b1p.032", 3), ("b1p.032", 2), ("b1p.32", 3), ("b1p.32", 2)]
+const VIEWS_SUB = [("b1p1", 3), ("b1p1", 2), ("b1p.32", 3), ("b1p.32", 2)]   # sub-Alfvenic, sub- to transonic
 const VIEWS_STR = [("b.1p.032", 3), ("b.1p.032", 2)]
 
 function parse_args(args)
@@ -374,6 +375,7 @@ function exp_chains(io, v, seed, snrs)
     sm = smooth_nan(v.sig, KER_FWHM)
     nsm = smooth_nan(n, KER_FWHM)
     sel = evalmask(size(s2, 1))
+    emit(io, "chains", "noise_anisotropy", 0, v.name, seed, (; A_native=gradient_anisotropy(cov1)[1], A_chain2=gradient_anisotropy(cov2)[1]))
     for snr in snrs
         sigma = v.peak / snr
         c2 = s2 .+ sigma .* n2
@@ -383,8 +385,9 @@ function exp_chains(io, v, seed, snrs)
         emit(io, "chains", "2p_dn20_k4_whiten", snr, v.name, seed,
              score_nt(vgt(c2, t2; whiten=true, cov=cov2), v, sel))
         c1 = v.sig .+ sigma .* n
-        for (name, ker, w) in (("1p_dn40_k8", 8, false), ("1p_dn40_k9", 9, false), ("1p_dn40_k9_whiten", 9, true))
-            r = vgt(c1, sigma; dn=40, ker, min_valid=400, whiten=w, cov=cov1, bin=2)
+        for (name, ker, w, cv) in (("1p_dn40_k8", 8, false, cov1), ("1p_dn40_k9", 9, false, cov1),
+                                   ("1p_dn40_k9_whiten", 9, true, cov1), ("1p_dn40_k9_whiten_identity", 9, true, [1.0, 1.0, 0.0]))
+            r = vgt(c1, sigma; dn=40, ker, min_valid=400, whiten=w, cov=cv, bin=2)
             emit(io, "chains", name, snr, v.name, seed, (; score_nt(r, v, sel)..., dAM_vs_2p=dam_pair(r.psi, rA.psi, v.tq2, v.tu2, sel)))
         end
         r = vgt(sm .+ sigma .* nsm, sigma * std(nsm); dn=40, ker=8, min_valid=400, bin=2)
@@ -429,7 +432,7 @@ function exp_weights(io, v, seed, snrs)
         negfrac = count(<(0), cube) / length(cube)
         emit(io, "weights", "I", snr, v.name, seed, (; score_nt(ref, v, sel)..., negvox=negfrac))
         for (name, w, tt) in (("Ipos", max.(cube, 0.0), t), ("I2", max.(cube, 0.0) .^ 2, t^2),
-                              ("unif", Float64.(cube .>= t), 0.5))
+                              ("sqrtI", sqrt.(max.(cube, 0.0)), sqrt(t)), ("unif", Float64.(cube .>= t), 0.5))
             r = vgt(cube, tt; weight=w)
             emit(io, "weights", name, snr, v.name, seed, (; score_nt(r, v, sel)..., dAM_vs_I=dam_pair(r.psi, ref.psi, v.tq2, v.tu2, sel)))
         end
@@ -549,7 +552,13 @@ function exp_seams(io, v, seed, snrs)
     xs = nx ÷ 2
     prof = dropdims(sum(v.sig; dims=(1, 2)); dims=(1, 2))
     kp = argmax(prof)
-    chsets = Dict("wing" => 1:nv ÷ 4, "core" => max(1, kp - nv ÷ 8):min(nv, kp + nv ÷ 8 - 1))
+    cum = cumsum(prof) ./ sum(prof)
+    # wing: the blue channels up to 15 % of the flux (a block whose band misses one line wing);
+    # core: a quarter of the channels around the peak
+    chsets = Dict("wing" => 1:findfirst(>=(0.15), cum), "core" => max(1, kp - nv ÷ 8):min(nv, kp + nv ÷ 8 - 1))
+    for (csname, chs) in chsets
+        emit(io, "seams", "flux_share_$(csname)", 0, v.name, seed, (; share=sum(prof[chs]) / sum(prof), nch=length(chs)))
+    end
     for normal in (1, 2)
         theta_t = normal == 1 ? pi / 2 : 0.0   # seam tangent
         coord = [(normal == 1 ? i : j) for i in 1:nx, j in 1:ny]
@@ -606,7 +615,7 @@ const EXPS = Dict(
     "split" => (exp_split, (4.0, 16.0, 64.0), VIEWS_SUB),
     "chains" => (exp_chains, (4.0, 16.0, 64.0), vcat(VIEWS_SUB, VIEWS_STR)),
     "thr" => (exp_thr, (4.0, 16.0), VIEWS_SUB),
-    "weights" => (exp_weights, (4.0, 16.0, 64.0), VIEWS_SUB),
+    "weights" => (exp_weights, (4.0, 8.0, 16.0, 64.0), vcat(VIEWS_SUB, VIEWS_STR)),
     "support" => (exp_support, (2.0, 4.0), VIEWS_SUB),
     "dn" => (exp_dn, (4.0, 16.0), VIEWS_SUB),
     "edges" => (exp_edges, (8.0, 64.0), VIEWS_SUB),
