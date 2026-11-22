@@ -96,11 +96,13 @@ end
     @test qd[half, 22] != 0 && qd[nx - half, 22] != 0
 end
 
-@testset "edge_mask ignores blank channels and checks weight_cube" begin
+@testset "edge_mask: a blank channel masks everything, weight_cube is checked" begin
     cube = edge_mask_cube()
     cube[:, :, 3] .= NaN
-    q, _ = VGT_QU_mv_2d(cube, 6, 1, 3, 1.0; min_valid=10, edge_mask=true)
+    q, _ = VGT_QU_mv_2d(cube, 6, 1, 2, 1.0; min_valid=10, edge_mask=true)   # channels 1:2 only
     @test count(!isnan, q) > 0
+    q, _ = VGT_QU_mv_2d(cube, 6, 1, 3, 1.0; min_valid=10, edge_mask=true)
+    @test all(isnan, q)
     cube = edge_mask_cube()
     weight = copy(cube)
     weight[20:22, 20:22, 1] .= NaN
@@ -117,6 +119,7 @@ end
         cube = Float32.(edge_mask_cube(30, 40, 3))
         cube[1:6, :, :] .= NaN32          # survey edge written as blanks
         cube[20:23, 10:14, :] .= NaN32
+        cube[8:30, 36:40, 2] .= NaN32     # blank in one channel and in one chunk strip only
         path = joinpath(dir, "c.fits")
         FITS(f -> write(f, cube; header=h), path, "w")
         base = (; input_file=path, keep_intermediate_chunks=false, noise=1.0, dn=6, ker=1, min_valid=4)

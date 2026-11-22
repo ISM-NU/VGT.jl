@@ -189,9 +189,10 @@ reads: the window of pixels `i-dn/2+1 : i+dn/2` (and the same in j) plus the
 gradient stencil of every pixel in it, so it spans `i-dn/2 : i+dn/2+1` for the
 central, Sobel and isotropic stencils and `i-dn/2 : i+dn/2` for the backward
 difference. A pixel is non-finite when it is NaN or Inf in any channel of
-`first_channel:last_channel` of `cube` or `weight_cube`; channels with no finite
-pixel at all (blank channels) are skipped so one empty channel does not blank the
-map. Pixels below the noise threshold are not non-finite and do not enter.
+`first_channel:last_channel` of `cube` or `weight_cube`. A fully blank channel
+therefore masks every pixel; trim such channels (`velocity_range_kms`) first. The
+rule depends only on the data, so chunked and one-piece runs agree. Pixels below
+the noise threshold are not non-finite and do not enter.
 """
 function _edge_footprint_mask(cube::AbstractArray{<:Any, 3}, weight_cube, dn::Int,
                               first_channel::Int, last_channel::Int, gradient_mode::Symbol)
@@ -201,7 +202,6 @@ function _edge_footprint_mask(cube::AbstractArray{<:Any, 3}, weight_cube, dn::In
         src === nothing && continue
         for channel in first_channel:last_channel
             img = @view src[:, :, channel]
-            any(isfinite, img) || continue
             @inbounds for idx in eachindex(img)
                 isfinite(img[idx]) || (bad[idx] = true)
             end
