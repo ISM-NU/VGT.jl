@@ -37,7 +37,8 @@ end
 function finalize_vgt_products(q_accum::AbstractMatrix, u_accum::AbstractMatrix, intensity_accum::AbstractMatrix,
                                ker::Int,
                                zero_stokes_policy::Symbol=:nan_before_smoothing,
-                               output_support_mode::Symbol=:smoothed_stokes_support)
+                               output_support_mode::Symbol=:smoothed_stokes_support;
+                               edge_mask::Bool=false)
     # Convert raw accumulated Q/U/I maps into the final psi and reliability
     # products. The policy arguments should not be changed casually, because they alter output support and masks.
     zero_stokes_policy in (:nan_before_smoothing, :keep_zero_before_smoothing) ||
@@ -68,6 +69,17 @@ function finalize_vgt_products(q_accum::AbstractMatrix, u_accum::AbstractMatrix,
         if _invalid_finalize_intensity(intensity_accum[idx])
             q_smooth[idx] = NaN
             u_smooth[idx] = NaN
+        end
+    end
+    if edge_mask
+        # The kernel marked pixels whose window footprint reaches a blank or the
+        # array border with NaN Q/U. Smoothing would fill them from neighbours,
+        # so they stay NaN: no direction there.
+        @inbounds for idx in eachindex(q_smooth, u_smooth, q_accum, u_accum)
+            if !isfinite(q_accum[idx]) || !isfinite(u_accum[idx])
+                q_smooth[idx] = NaN
+                u_smooth[idx] = NaN
+            end
         end
     end
     if output_support_mode === :direct_fit_support

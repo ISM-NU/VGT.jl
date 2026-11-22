@@ -17,5 +17,6 @@ using Test
     include("regrid.jl")
     include("pipeline_fit_diagnostics.jl")
     include("chunk_seams.jl")
+    include("edge_mask.jl")
     include("angle_calibration.jl")
 end

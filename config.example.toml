@@ -75,6 +75,12 @@ angle_frame = "pixel"
 # blocks at the right and top edges are dropped. Angles are never averaged.
 output_bin = 1
 
+# Opt-in edge mask (default false, output unchanged). true sets the direction to
+# NaN at every pixel whose dn x dn window plus gradient stencil reaches a
+# non-finite input pixel or the array border, so directions do not turn across
+# a survey edge. See README.md (edge_mask).
+# edge_mask = false
+
 [execution]
 # Number of y chunks: "auto" or a positive integer. Thread count is set when
 # launching Julia (--threads=N or JULIA_NUM_THREADS).

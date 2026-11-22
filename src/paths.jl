@@ -54,6 +54,7 @@ function run_parameters(cfg::VGTConfig; label::AbstractString=DEFAULT_RUN_FAMILY
         params["gradient_noise_cov"] = join(string.(cfg.gradient_noise_cov), "_")
         isempty(cfg.gradient_noise_cov_file) || (params["gradient_noise_cov_file"] = cfg.gradient_noise_cov_file)
     end
+    cfg.edge_mask && (params["edge_mask"] = "true")
     isempty(cfg.velocity_range_kms) || (params["vrange"] = join(string.(cfg.velocity_range_kms), "_"))
     return params
 end

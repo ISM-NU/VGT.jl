@@ -195,6 +195,7 @@ function _config_metadata(cfg::VGTConfig)
         "gradient_whiten" => cfg.gradient_whiten,
         "gradient_noise_cov" => cfg.gradient_noise_cov,
         "gradient_noise_cov_file" => cfg.gradient_noise_cov_file,
+        "edge_mask" => cfg.edge_mask,
     )
 end
 

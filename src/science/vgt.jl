@@ -167,6 +167,74 @@ end
     throw(ArgumentError("No stencil for gradient_mode=$mode"))
 end
 
+# Input pixels read by the gradient at (i, j), as (di, dj) offsets. These are
+# exactly the pixels _stencil_gradient (or the backward difference) touches;
+# the corners of the 3x3 block are not read by the central difference.
+const _CROSS_STENCIL = ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1))
+const _BLOCK_STENCIL = Tuple((di, dj) for dj in -1:1 for di in -1:1)
+const _BACKWARD_STENCIL = ((0, 0), (-1, 0), (0, -1))
+
+function _gradient_stencil_offsets(gradient_mode::Symbol)
+    gradient_mode === :central_checked && return _CROSS_STENCIL
+    gradient_mode === :nan_edge_backward && return _BACKWARD_STENCIL
+    return _BLOCK_STENCIL
+end
+
+"""
+    _edge_footprint_mask(cube, weight_cube, dn, first_channel, last_channel, gradient_mode)
+
+`BitMatrix`, true where the footprint of the VGT window at that pixel reaches a
+non-finite input pixel or the array border. The footprint is what the kernel
+reads: the window of pixels `i-dn/2+1 : i+dn/2` (and the same in j) plus the
+gradient stencil of every pixel in it, so it spans `i-dn/2 : i+dn/2+1` for the
+central, Sobel and isotropic stencils and `i-dn/2 : i+dn/2` for the backward
+difference. A pixel is non-finite when it is NaN or Inf in any channel of
+`first_channel:last_channel` of `cube` or `weight_cube`; channels with no finite
+pixel at all (blank channels) are skipped so one empty channel does not blank the
+map. Pixels below the noise threshold are not non-finite and do not enter.
+"""
+function _edge_footprint_mask(cube::AbstractArray{<:Any, 3}, weight_cube, dn::Int,
+                              first_channel::Int, last_channel::Int, gradient_mode::Symbol)
+    nx, ny, _ = size(cube)
+    bad = falses(nx, ny)
+    for src in (cube, weight_cube)
+        src === nothing && continue
+        for channel in first_channel:last_channel
+            img = @view src[:, :, channel]
+            any(isfinite, img) || continue
+            @inbounds for idx in eachindex(img)
+                isfinite(img[idx]) || (bad[idx] = true)
+            end
+        end
+    end
+    offsets = _gradient_stencil_offsets(gradient_mode)
+    # grad_bad: the gradient at (i, j) is NaN (stencil leaves the array or hits a bad pixel).
+    grad_bad = falses(nx, ny)
+    @inbounds for j in 1:ny, i in 1:nx
+        for (di, dj) in offsets
+            ii, jj = i + di, j + dj
+            if ii < 1 || ii > nx || jj < 1 || jj > ny || bad[ii, jj]
+                grad_bad[i, j] = true
+                break
+            end
+        end
+    end
+    # Summed-area table of grad_bad, so each window is counted in O(1).
+    sat = zeros(Int, nx + 1, ny + 1)
+    @inbounds for j in 1:ny, i in 1:nx
+        sat[i + 1, j + 1] = grad_bad[i, j] + sat[i, j + 1] + sat[i + 1, j] - sat[i, j]
+    end
+    half = div(dn, 2)
+    masked = trues(nx, ny)
+    @inbounds for j in 1:ny, i in 1:nx
+        is, ie, js, je = i - half + 1, i + half, j - half + 1, j + half
+        (is < 1 || ie > nx || js < 1 || je > ny) && continue
+        count = sat[ie + 1, je + 1] - sat[is, je + 1] - sat[ie + 1, js] + sat[is, js]
+        count == 0 && (masked[i, j] = false)
+    end
+    return masked
+end
+
 function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
                                min_valid::Int=100,
                                fitter_mode::Symbol=:axial_vonmises,
@@ -177,7 +245,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                gradient_whiten::Bool=false,
                                gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                                gradient_noise_cov_map=nothing,
-                               weight_cube=nothing)
+                               weight_cube=nothing,
+                               edge_mask::Bool=false)
     # This is the science kernel. It returns Q/U maps accumulated over channels.
     # The final magnetic-field angle is computed later from these maps.
     nx, ny, nv = size(cube)
@@ -209,6 +278,11 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
     # describe the same headless direction.
     q_accum = zeros(nx, ny)
     u_accum = zeros(nx, ny)
+    # Opt-in: pixels whose window footprint reaches a non-finite pixel or the
+    # array border get NaN Q/U ("no direction") instead of a fit on a partial
+    # window. Off by default, so the default output is unchanged.
+    footprint_masked = edge_mask ?
+        _edge_footprint_mask(cube, weight_cube, dn, first_channel, last_channel, gradient_mode) : nothing
     grad_x = zeros(nx, ny)
     grad_y = zeros(nx, ny)
     half_dn = div(dn, 2)
@@ -339,6 +413,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
             if ii < half_dn || ii > nx - half_dn || jj < half_dn || jj > ny - half_dn
                 continue
             end
+            footprint_masked !== nothing && footprint_masked[ii, jj] && continue
 
             tid = collect_profile ? Threads.threadid() : 1
             is = ii - half_dn + 1
@@ -423,6 +498,15 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
 
     end
 
+    if footprint_masked !== nothing
+        @inbounds for idx in eachindex(footprint_masked)
+            if footprint_masked[idx]
+                q_accum[idx] = NaN
+                u_accum[idx] = NaN
+            end
+        end
+    end
+
     if collect_profile
         fit_rbar2_map = fill(NaN, nx, ny)
         @inbounds for idx in eachindex(fit_rbar2_map)
@@ -445,7 +529,8 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                       gradient_whiten::Bool=false,
                       gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                       gradient_noise_cov_map=nothing,
-                      weight_cube=nothing)
+                      weight_cube=nothing,
+                      edge_mask::Bool=false)
     # Public non-profiling VGT entry point used by tests and analysis scripts.
     q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
                                                 fitter_mode=fitter_mode, collect_profile=false,
@@ -455,7 +540,8 @@ function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_cha
                                                 gradient_whiten=gradient_whiten,
                                                 gradient_noise_cov=gradient_noise_cov,
                                                 gradient_noise_cov_map=gradient_noise_cov_map,
-                                                weight_cube=weight_cube)
+                                                weight_cube=weight_cube,
+                                                edge_mask=edge_mask)
     return q_accum, u_accum
 end
 
@@ -467,7 +553,8 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                gradient_whiten::Bool=false,
                                gradient_noise_cov::AbstractVector{<:Real}=Float64[],
                                gradient_noise_cov_map=nothing,
-                               weight_cube=nothing)
+                               weight_cube=nothing,
+                               edge_mask::Bool=false)
     # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
     # counters that help evaluate fit quality across the sky.
     return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
@@ -478,7 +565,8 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                  gradient_whiten=gradient_whiten,
                                  gradient_noise_cov=gradient_noise_cov,
                                                 gradient_noise_cov_map=gradient_noise_cov_map,
-                                 weight_cube=weight_cube)
+                                 weight_cube=weight_cube,
+                                 edge_mask=edge_mask)
 end
 
 function chunk_y_bounds(j::Int, ny::Int, ny_chunks::Int)
@@ -571,6 +659,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
             gradient_noise_cov=cfg.gradient_noise_cov,
             gradient_noise_cov_map=sub_cov_map,
             weight_cube=sub_weight,
+            edge_mask=cfg.edge_mask,
         )
         diagnostics = (
             fit_attempts=profile[:fit_attempts],

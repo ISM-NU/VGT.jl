@@ -93,7 +93,8 @@ function run_pipeline(cfg::VGTConfig)
         q_stitched, u_stitched, intensity_stitched, diagnostics, fit_maps = stitch_chunk_outputs(resolved_cfg, nx, ny)
         finalized = finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, resolved_cfg.ker,
                                           resolved_cfg.zero_stokes_policy,
-                                          resolved_cfg.output_support_mode)
+                                          resolved_cfg.output_support_mode;
+                                          edge_mask=resolved_cfg.edge_mask)
         products = if resolved_cfg.output_bin == 1
             (; finalized.psi, finalized.reliability, fit_maps.fit_rbar2, fit_maps.fit_support, header)
         else
