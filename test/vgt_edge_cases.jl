@@ -311,13 +311,15 @@ end
                 dn=8, ker=2, min_valid=16)
         for (name, extra) in (("one", (; ny_chunks=1)), ("split", (; ny_chunks=3)),
                               ("bin", (; ny_chunks=1, output_bin=3)),
-                              ("direct", (; ny_chunks=1, output_support_mode=:direct_fit_support)))
+                              ("direct", (; ny_chunks=1, output_support_mode=:direct_fit_support)),
+                              ("edge", (; ny_chunks=3, edge_mask=true)))
             run = run_pipeline(VGTConfig(; base..., extra..., output_dir=joinpath(dir, name)))
             rel = filter(isfinite, run.reliability)
             @test length(rel) > 0.3 * count(isfinite, run.psi)
             @test all(>=(0), rel)
             @test maximum(rel) <= 1 + 1e-6          # Float32 output
-            @test all(run.W .>= hypot.(run.Q, run.U) .* (1 - 1e-12))
+            @test all(.!isfinite.(run.Q) .| (run.W .>= hypot.(run.Q, run.U) .* (1 - 1e-12)))
+            name == "edge" && @test all(isnan.(run.W) .== isnan.(run.Q))
             # Partial coverage: some sky with intensity has no fitted weight.
             name == "one" && @test any((run.W .== 0) .& (run.I .> 0))
         end
