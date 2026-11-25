@@ -63,12 +63,13 @@ struct VGTConfig
     # array border (see `_edge_footprint_mask`). Off by default.
     edge_mask::Bool
 
-    # Takes every field, already normalized, in field order. The public
-    # constructors below build the tuple; this one validates it so invalid
-    # science settings fail before a large FITS cube run starts.
+    # Takes every field, in field order. Every construction path ends here, so
+    # normalizing and validating here means invalid science settings fail
+    # before a large FITS cube run starts, whichever constructor was used.
     function VGTConfig(values::Tuple)
-        _validate_config(NamedTuple{fieldnames(VGTConfig)}(values))
-        return new(values...)
+        fields = map(_normalize_field, fieldnames(VGTConfig), values)
+        _validate_config(NamedTuple{fieldnames(VGTConfig)}(fields))
+        return new(fields...)
     end
 end
 
@@ -139,14 +140,9 @@ function _build_config(given::AbstractDict{Symbol})
         throw(ArgumentError("Unknown VGTConfig field(s): $(join(sort!(collect(unknown)), ", "))"))
     values = map(fieldnames(VGTConfig)) do name
         spec = CONFIG_SPEC[name]
-        raw = if haskey(given, name)
-            given[name]
-        elseif haskey(spec, :default)
-            spec.default
-        else
-            throw(ArgumentError("Missing required keyword `$name`"))
-        end
-        _normalize_field(name, raw)
+        haskey(given, name) && return given[name]
+        haskey(spec, :default) && return spec.default
+        throw(ArgumentError("Missing required keyword `$name`"))
     end
     return VGTConfig(values)
 end

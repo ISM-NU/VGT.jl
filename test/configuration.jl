@@ -413,6 +413,17 @@ end
     end
 end
 
+@testset "tuple constructor validates like keywords" begin
+    cfg = VGT.VGTConfig(input_file="dummy.fits", output_dir="out", noise=1.0, dn=20, ker=4)
+    fields = collect(fieldnames(VGT.VGTConfig))
+    values(; changes...) = Tuple(haskey(changes, f) ? changes[f] : getfield(cfg, f) for f in fields)
+    @test VGT.VGTConfig(values()).dn == 20
+    @test VGT.VGTConfig(values(fitter_mode="axial_vonmises")).fitter_mode === :axial_vonmises
+    @test_throws ArgumentError VGT.VGTConfig(values(fitter_mode=:bogus))
+    @test_throws ArgumentError VGT.VGTConfig(values(ny_chunks=0))
+    @test_throws ArgumentError VGT.VGTConfig(values(ny_chunks=:foo))
+end
+
 @testset "auto execution trades chunks for memory" begin
     cfg = VGT.VGTConfig(input_file="dummy.fits", output_dir="out", noise=1.0, dn=20, ker=4,
                         ny_chunks=:auto)
