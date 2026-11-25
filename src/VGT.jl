@@ -32,7 +32,7 @@ include("pipeline/outputs.jl")
 
 export VGTConfig, load_config, run_pipeline, write_pipeline_outputs, is_interrupt_exception
 export read_cube_metadata, getcoor, velocity_axis_kms
-export fit_window_result, VGT_QU_mv_2d, VGT_QU_mv_2d_profiled
+export WindowFitResult, block_mean, fit_window_result, VGT_QU_mv_2d, VGT_QU_mv_2d_profiled
 export robust_negative_noise, build_noise_cube
 export measure_gradient_noise, gradient_anisotropy, gradient_noise_cov_map
 export write_gradient_noise_cov_map
