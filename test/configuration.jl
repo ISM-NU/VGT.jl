@@ -438,6 +438,7 @@ end
     @test all(peak.(chunks) .<= budgets)
     @test issorted(chunks)   # a tighter budget never means fewer chunks
     @test chunks[end] > chunks[1]
+    @test VGT.estimate_peak_chunk_bytes(100, 10, 20) == 160_000   # 100*20*10*4 + 5*100*20*8
 
     # Too little memory for even one-row chunks is an error, not a silent overrun.
     @test_throws ArgumentError chunks_for(1_000)
