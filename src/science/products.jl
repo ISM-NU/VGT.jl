@@ -77,8 +77,14 @@ function finalize_vgt_products(q_accum::AbstractMatrix, u_accum::AbstractMatrix,
     u_before_smoothing = copy(u_accum)
     if zero_stokes_policy === :nan_before_smoothing
         @inbounds for idx in eachindex(q_before_smoothing, u_before_smoothing, q_accum, u_accum)
-            q_accum[idx] == 0 && (q_before_smoothing[idx] = NaN)
-            u_accum[idx] == 0 && (u_before_smoothing[idx] = NaN)
+            # A pixel with no fit has Q == U == 0; mask both together. Masking
+            # each map on its own zeros dropped every pixel of a field whose
+            # fitted angles are exactly 0 or 90 deg (U == 0 or Q == 0 there),
+            # leaving psi all NaN for a perfectly axis-aligned field.
+            if q_accum[idx] == 0 && u_accum[idx] == 0
+                q_before_smoothing[idx] = NaN
+                u_before_smoothing[idx] = NaN
+            end
         end
     end
     @inbounds for idx in eachindex(q_before_smoothing, u_before_smoothing, intensity_accum)

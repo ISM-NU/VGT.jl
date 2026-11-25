@@ -23,8 +23,9 @@ function reference_finalize_vgt_products(q_accum, u_accum, intensity_accum, fitt
     q_before_smoothing = copy(q_accum)
     u_before_smoothing = copy(u_accum)
     if zero_stokes_policy === :nan_before_smoothing
-        q_before_smoothing[q_accum .== 0] .= NaN
-        u_before_smoothing[u_accum .== 0] .= NaN
+        no_fit = (q_accum .== 0) .& (u_accum .== 0)
+        q_before_smoothing[no_fit] .= NaN
+        u_before_smoothing[no_fit] .= NaN
     end
     q_before_smoothing[invalid_intensity] .= NaN
     u_before_smoothing[invalid_intensity] .= NaN
@@ -343,10 +344,26 @@ end
     # Threshold below every weight, so the window still fits; only its weight changes.
     q, u, prof = VGT_QU_mv_2d_profiled(cube, 8, 1, nv, -10.0; min_valid=20, weight_cube=weight)
     w = prof[:fitted_weight]
-    @test prof[:fit_support][12, 12] == 1.0        # both channels fitted
+    @test prof[:fit_support][12, 12] == 0.5        # only channel 1 had weight; the zero-weight fit does not count
+    @test prof[:fit_support][13, 12] == 1.0
     @test w[12, 12] == 2.0                         # channel 1 contributes zero, not -3
     @test w[13, 12] == 4.0
     # Same orientation as a neighbour: the clamped window does not flip the vote.
     @test atan(u[12, 12], q[12, 12]) ≈ atan(u[13, 12], q[13, 12]) atol = 1e-6
     @test hypot(q[12, 12], u[12, 12]) ≈ 2.0 rtol = 1e-6
+end
+
+@testset "axis-aligned field keeps psi (U == 0 is not a missing fit)" begin
+    nx, ny, nv = 32, 32, 2
+    cube = Float64[0.5 * i + 5.0 + k for i in 1:nx, j in 1:ny, k in 1:nv]   # pure x-ramp: gradient angle exactly 0
+    q, u, prof = VGT_QU_mv_2d_profiled(cube, 8, 1, nv, 0.0; min_valid=20)
+    fitted = prof[:fitted_weight] .> 0
+    @test count(fitted) > 0
+    @test all(u[fitted] .== 0)
+    fin = VGT.finalize_vgt_products(copy(q), copy(u), VGT.compute_stokes_intensity(cube), 2; fitted_weight=prof[:fitted_weight])
+    good = fitted .& isfinite.(fin.psi)
+    @test count(good) == count(fitted)
+    # Gradient along x, field rotated by 90 deg: psi = pi/2.
+    @test all(isapprox.(mod.(fin.psi[good], pi), pi / 2; atol=1e-9))
+    @test all(isapprox.(fin.reliability[good], 1.0; atol=1e-9))
 end
