@@ -283,6 +283,10 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
     # window. Off by default, so the default output is unchanged.
     footprint_masked = edge_mask ?
         _edge_footprint_mask(cube, weight_cube, dn, first_channel, last_channel, gradient_mode) : nothing
+    # w_accum sums the same Stokes weights that enter Q/U, over fitted windows
+    # only. It is the reliability denominator: with weights >= 0,
+    # sqrt(Q^2 + U^2) <= W by the triangle inequality, so P = |Q, U| / W <= 1.
+    w_accum = zeros(nx, ny)
     grad_x = zeros(nx, ny)
     grad_y = zeros(nx, ny)
     half_dn = div(dn, 2)
@@ -314,6 +318,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
         :fit_rbar2 => nothing,
         :fit_attempt_fraction => nothing,
         :fit_support => nothing,
+        :fitted_weight => w_accum,
     )
 
     fit_rbar2_num = collect_profile ? zeros(nx, ny) : Matrix{Float64}(undef, 0, 0)
@@ -453,7 +458,11 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 elseif whiten_w !== nothing
                     fit_angle = _unwhiten_angle(whiten_w, fit_angle)
                 end
-                intensity_weight = Float64(mask_image[ii, jj])
+                # Clamped at zero: a negative centre pixel (noise around zero
+                # intensity) would otherwise enter Q/U with a negative weight,
+                # i.e. vote for the orientation rotated by 90 degrees. NaN still
+                # propagates (max(NaN, 0.0) is NaN) and is masked downstream.
+                intensity_weight = max(Float64(mask_image[ii, jj]), 0.0)
                 if collect_profile
                     _accumulate_weighted_diagnostic!(fit_rbar2_num, fit_rbar2_w, ii, jj, result.rbar2, intensity_weight)
                     if result.low_confidence
@@ -470,6 +479,7 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                     # the magnetic-field orientation proxy.
                     q_accum[ii, jj] = muladd(stokes_weight, cos(2.0 * fit_angle), q_accum[ii, jj])
                     u_accum[ii, jj] = muladd(stokes_weight, sin(2.0 * fit_angle), u_accum[ii, jj])
+                    w_accum[ii, jj] += stokes_weight
 
                     if collect_profile
                         fit_successes_tls[tid] += 1
@@ -503,6 +513,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
             if footprint_masked[idx]
                 q_accum[idx] = NaN
                 u_accum[idx] = NaN
+                # Keep W on the same mask as Q/U so the reliability stays <= 1.
+                w_accum[idx] = NaN
             end
         end
     end
@@ -556,7 +568,9 @@ function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                                weight_cube=nothing,
                                edge_mask::Bool=false)
     # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
-    # counters that help evaluate fit quality across the sky.
+    # counters that help evaluate fit quality across the sky, and
+    # profile[:fitted_weight], the reliability denominator for
+    # finalize_vgt_products.
     return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
                                  fitter_mode=fitter_mode, collect_profile=true,
                                  rbar2_weight=rbar2_weight,
@@ -587,7 +601,8 @@ Base.@kwdef struct VGTDiagnostics
     fit_low_confidence_windows::Int = 0
 end
 
-function save_chunk_atomic(filename::String, q_accum, u_accum, intensity_accum, diagnostics::NamedTuple; fit_maps::NamedTuple=(;))
+function save_chunk_atomic(filename::String, q_accum, u_accum, intensity_accum, fitted_weight,
+                           diagnostics::NamedTuple; fit_maps::NamedTuple=(;))
     # Write through a temporary file and then move it into place. If a run is
     # interrupted, this avoids leaving a half-written chunk with the final name.
     tmp = string(filename, ".tmp.", getpid(), ".", Threads.threadid())
@@ -596,6 +611,7 @@ function save_chunk_atomic(filename::String, q_accum, u_accum, intensity_accum, 
             q=q_accum,
             u=u_accum,
             i=intensity_accum,
+            w=fitted_weight,
             fit_attempts=diagnostics.fit_attempts,
             fit_successes=diagnostics.fit_successes,
             fit_failures=diagnostics.fit_failures,
@@ -680,6 +696,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
         # window context; it must not duplicate pixels in the stitched output.
         q_accum = q_padded[:, trim_y_start:trim_y_end]
         u_accum = u_padded[:, trim_y_start:trim_y_end]
+        w_accum = profile[:fitted_weight][:, trim_y_start:trim_y_end]
         intensity_cube = sub_weight === nothing ? sub_cube : sub_weight
         @views intensity_accum = sum(intensity_cube[:, trim_y_start:trim_y_end, :]; dims=3)[:, :, 1]
         fit_maps_trimmed = (
@@ -689,7 +706,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
         )
 
         filename = joinpath(cfg.output_dir, "chunk_2d_$(j).jld2")
-        save_chunk_atomic(filename, q_accum, u_accum, intensity_accum, diagnostics; fit_maps=fit_maps_trimmed)
+        save_chunk_atomic(filename, q_accum, u_accum, intensity_accum, w_accum, diagnostics; fit_maps=fit_maps_trimmed)
         elapsed_s = round((time_ns() - chunk_start_ns) / 1e9; digits=2)
         @info "Done chunk" chunk=j chunks=cfg.ny_chunks y_start=y_start y_end=y_end elapsed_s=elapsed_s
         return filename

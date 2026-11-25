@@ -286,6 +286,7 @@ end
             Q=zeros(n, n),
             U=zeros(n, n),
             I=zeros(n, n),
+            W=zeros(n, n),
             fit_rbar2=fill(NaN, n, n),
             fit_support=zeros(n, n),
             header=nothing,

@@ -351,14 +351,16 @@ function main(args)
     intensity_accum = compute_stokes_intensity(cube)
     q_smooth, smooth_q_s = timed_result(() -> imfilter_gaussian(q_accum, ker))
     u_smooth, smooth_u_s = timed_result(() -> imfilter_gaussian(u_accum, ker))
-    intensity_smooth, smooth_i_s = timed_result(() -> imfilter_gaussian(intensity_accum, ker))
+    # The third smoothed map is the fitted Stokes weight, the reliability
+    # denominator (key kept as smooth_i for report compatibility).
+    weight_smooth, smooth_i_s = timed_result(() -> imfilter_gaussian(vgt_profile[:fitted_weight], ker))
     psi_s = @elapsed begin
         q_smooth[intensity_accum .== 0] .= NaN
         u_smooth[intensity_accum .== 0] .= NaN
         0.5 .* atan.(u_smooth, q_smooth) .+ (pi / 2)
     end
     reliability_s = @elapsed begin
-        sqrt.(q_smooth.^2 .+ u_smooth.^2) ./ intensity_smooth
+        sqrt.(q_smooth.^2 .+ u_smooth.^2) ./ weight_smooth
     end
     finalize_s = smooth_q_s + smooth_u_s + smooth_i_s + psi_s + reliability_s
 
