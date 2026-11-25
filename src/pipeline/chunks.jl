@@ -7,6 +7,7 @@ function stitch_chunk_outputs(cfg::VGTConfig, nx::Int, ny::Int)
     q_stitched = zeros(Float64, nx, ny)
     u_stitched = zeros(Float64, nx, ny)
     intensity_stitched = zeros(Float64, nx, ny)
+    weight_stitched = zeros(Float64, nx, ny)
     fit_rbar2_stitched = fill(NaN, nx, ny)
     fit_attempt_fraction_stitched = zeros(Float64, nx, ny)
     fit_support_stitched = zeros(Float64, nx, ny)
@@ -34,6 +35,9 @@ function stitch_chunk_outputs(cfg::VGTConfig, nx::Int, ny::Int)
             q_stitched[:, y_start:y_end] = q_chunk_accum
             u_stitched[:, y_start:y_end] = file["u"]
             intensity_stitched[:, y_start:y_end] = file["i"]
+            # No fallback: chunks without "w" predate the fitted-weight
+            # reliability and cannot be normalised consistently.
+            weight_stitched[:, y_start:y_end] = file["w"]
             if haskey(file, "fit_rbar2") && file["fit_rbar2"] !== nothing
                 fit_rbar2_stitched[:, y_start:y_end] = file["fit_rbar2"]
             end
@@ -64,5 +68,5 @@ function stitch_chunk_outputs(cfg::VGTConfig, nx::Int, ny::Int)
         fit_attempt_fraction=fit_attempt_fraction_stitched,
         fit_support=fit_support_stitched,
     )
-    return q_stitched, u_stitched, intensity_stitched, diagnostics, fit_maps
+    return q_stitched, u_stitched, intensity_stitched, weight_stitched, diagnostics, fit_maps
 end

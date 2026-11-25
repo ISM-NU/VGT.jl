@@ -52,9 +52,13 @@ it became a default (see `synthetic-fitter-validation-notes.md`):
 ## Reproducing the prototype
 
 The legacy-matching modes and the Gaussian histogram baseline were removed for
-the public release, because validation found them worse than the defaults. They,
-and the validation runs that compared them, live in the archived private
-repository.
+the public release. The legacy-matching modes validated worse than the
+defaults. The Gaussian histogram fitter is not uniformly worse: the 2026-11
+estimator audit (branch `estimator-audit`) found it worse than the von Mises
+estimator in windows with a single structure but better within about 9 px of
+filament crossings, in line with the crossing-filament rows of
+`synthetic-fitter-validation-notes.md`. The removed code, and the validation
+runs that compared it, live in the archived private repository.
 
 ## Third-party code
 

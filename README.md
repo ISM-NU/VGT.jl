@@ -39,15 +39,20 @@ VGT products (FITS, one run directory each):
 
 - `psi_*.fits`: 2D VGT orientation proxy in radians
 - `psi_reliability_*.fits`: smoothed Stokes coherence,
-  `P = sqrt(Q^2 + U^2) / I`
-- `psi_fit_rbar2_*.fits`: fitter-level coherence diagnostic
+  `P = sqrt(Q^2 + U^2) / W` in [0, 1], where `W` is the summed Stokes weight of
+  the fitted windows, smoothed like Q and U. Maps made before 2026-11-25 used the
+  channel-summed intensity instead, could exceed 1, and are not comparable (see
+  [`docs/decisions.md`](./docs/decisions.md)); new maps carry `RELNORM =
+  'FITWEIGHT'`
+- `psi_fit_rbar2_*.fits`: fitter-level coherence diagnostic, the mean resultant
+  length R̄ of the doubled window angles (not R̄², despite the name)
 - `psi_support_*.fits`: fraction of velocity channels contributing successful
   local fits per sky pixel
 
 By default all products sit on the input cube's pixel grid (same `CDELT`), but
 their resolution is coarser: the `dn` window and the `ker` Gaussian (sigma, input
 pixels), recorded in each header as `VGTDN`, `VGTKER`, `VGTKFWHM`. Set
-`output_bin = b` to write them on a coarser grid instead: the smoothed Q/U/I are
+`output_bin = b` to write them on a coarser grid instead: the smoothed Q/U/W are
 averaged over `b` x `b` input pixels, psi and reliability are recomputed from those
 averages, and the header WCS is scaled to match (`VGTBIN = b`). By default `psi` is
 measured counter-clockwise from +FITS axis 1 of that grid (`PSIFRAME =
@@ -201,9 +206,11 @@ default is `:central_checked`, adopted after synthetic validation showed much
 lower angular error without the coverage loss from larger windows. The
 backward-difference path is kept for comparisons. The Gaussian-histogram fitter,
 the legacy-matching modes and `separable_shrinkage` noise were removed in 0.1.0
-after validation found them worse than the defaults (see
-[`docs/provenance.md`](./docs/provenance.md)); config files that still set them
-are rejected with an explanatory error. The
+(see [`docs/provenance.md`](./docs/provenance.md)); config files that still set
+them are rejected with an explanatory error. The legacy modes and
+`separable_shrinkage` validated worse than the defaults. The Gaussian-histogram
+fitter is worse in windows with a single structure but better within about 9 px
+of filament crossings (2026-11 estimator audit, branch `estimator-audit`). The
 implementation is in `src/science/fitters.jl` and `src/science/vgt.jl`.
 Do not change fitter defaults, masks, interpolation, or numerical shortcuts
 without validation evidence.
@@ -281,8 +288,8 @@ default. Each run contains:
 
 - `chunk_2d_*.jld2`: intermediate per-chunk results
 - `psi_<input-stem>.fits`: final angle map
-- `psi_reliability_<input-stem>.fits`: reliability map
-- `psi_fit_rbar2_<input-stem>.fits`: doubled-angle resultant coherence
+- `psi_reliability_<input-stem>.fits`: reliability map, `sqrt(Q^2+U^2)/W` in [0, 1]
+- `psi_fit_rbar2_<input-stem>.fits`: doubled-angle mean resultant length R̄
 - `psi_support_<input-stem>.fits`: fraction of velocity channels contributing
   successful local fits per sky pixel
 - `psi_plot_<input-stem>.png`: quick-look image of the result (skipped with a

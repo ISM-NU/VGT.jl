@@ -44,7 +44,7 @@ using Test
             b = run_pipeline(VGTConfig(; base..., input_file=cut, output_dir=joinpath(dir, "cut_$(noise_mode)")))
             @test a.channels == 4:6 && b.channels == 1:3
             @test count(isfinite, a.psi) > 0
-            for f in (:psi, :reliability, :fit_rbar2, :fit_support, :Q, :U, :I)
+            for f in (:psi, :reliability, :fit_rbar2, :fit_support, :Q, :U, :I, :W)
                 @test isequal(getfield(a, f), getfield(b, f))
             end
             @test a.diagnostics == b.diagnostics

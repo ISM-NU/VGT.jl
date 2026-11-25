@@ -23,7 +23,7 @@ function run_one(cfg)
     println("Writing outputs...")
     outputs = write_pipeline_outputs(run)
     println("Success. Results saved to $(outputs.psi_path)")
-    println("Reliability map saved to $(outputs.reliability_path)  (P=sqrt(Q²+U²)/I, range 0-1)")
+    println("Reliability map saved to $(outputs.reliability_path)  (P=sqrt(Q²+U²)/W, W = summed weight of the fitted windows, range 0-1)")
     println("Fit diagnostics: attempts=$(run.diagnostics.fit_attempts) successes=$(run.diagnostics.fit_successes) failures=$(run.diagnostics.fit_failures)")
 end
 

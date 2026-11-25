@@ -7,13 +7,16 @@ Base.@kwdef struct PipelineRun
     # In-memory result of one pipeline run before FITS files are written.
     config::VGTConfig
     # psi, reliability, fit_rbar2, fit_support and header are on the output
-    # grid (binned when config.output_bin > 1); Q, U, I are the raw stitched
-    # accumulators on the input grid, before smoothing.
+    # grid (binned when config.output_bin > 1); Q, U, I, W are the raw stitched
+    # accumulators on the input grid, before smoothing. I is the channel-summed
+    # intensity (sky mask); W is the summed Stokes weight of the fitted windows
+    # (reliability denominator).
     psi::Matrix{Float64}
     reliability::Matrix{Float32}
     Q::Matrix{Float64}
     U::Matrix{Float64}
     I::Matrix{Float64}
+    W::Matrix{Float64}
     fit_rbar2::Matrix{Float64}
     fit_support::Matrix{Float64}
     header
@@ -54,7 +57,7 @@ end
 
 function run_pipeline(cfg::VGTConfig)
     # Resolve execution settings, process every chunk, stitch chunk products,
-    # then convert accumulated Q/U/I into final psi and reliability maps.
+    # then convert accumulated Q/U/W/I into final psi and reliability maps.
     started_at = Dates.now(Dates.UTC)
     start_ns = time_ns()
     output_dir = resolved_output_dir(cfg)
@@ -85,16 +88,18 @@ function run_pipeline(cfg::VGTConfig)
         nv == nv_input || @info "Velocity window" velocity_range_kms=cfg.velocity_range_kms channels=channels
         @info "Resolved noise model" requested=resolved_cfg.noise_mode resolved=noise_model.mode scalar_noise=noise_model.scalar noise_threshold=noise_model.scalar * resolved_cfg.noise_sigma_multiplier noise_sigma_multiplier=resolved_cfg.noise_sigma_multiplier tile_size=resolved_cfg.noise_tile_size
 
-        # Chunk processing writes intermediate Q/U/I and diagnostics to disk so
+        # Chunk processing writes intermediate Q/U/W/I and diagnostics to disk so
         # large cubes do not need a full in-memory working cube.
         for j in 1:resolved_cfg.ny_chunks
             process_chunk(j, resolved_cfg, ny, nv; noise_model=noise_model, channels=channels)
         end
-        q_stitched, u_stitched, intensity_stitched, diagnostics, fit_maps = stitch_chunk_outputs(resolved_cfg, nx, ny)
+        q_stitched, u_stitched, intensity_stitched, weight_stitched, diagnostics, fit_maps =
+            stitch_chunk_outputs(resolved_cfg, nx, ny)
         finalized = finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, resolved_cfg.ker,
                                           resolved_cfg.zero_stokes_policy,
                                           resolved_cfg.output_support_mode;
-                                          edge_mask=resolved_cfg.edge_mask)
+                                          edge_mask=resolved_cfg.edge_mask,
+                                          fitted_weight=weight_stitched)
         products = if resolved_cfg.output_bin == 1
             (; finalized.psi, finalized.reliability, fit_maps.fit_rbar2, fit_maps.fit_support, header)
         else
@@ -119,6 +124,7 @@ function run_pipeline(cfg::VGTConfig)
             Q=q_stitched,
             U=u_stitched,
             I=intensity_stitched,
+            W=weight_stitched,
             fit_rbar2=products.fit_rbar2,
             fit_support=products.fit_support,
             header=products.header,

@@ -61,8 +61,11 @@ using WCS: pix_to_world
         @test binned.header["CDELT2"] == 1.5 && binned.header["CRPIX1"] == (8.0 - 0.5) / 3 + 0.5
 
         # psi comes from the averaged Q/U, which here equals the axial mean of the full-grid psi.
-        fin = finalize_vgt_products(copy(full.Q), copy(full.U), copy(full.I), 1)
-        @test isequal(binned.psi, bin_products(fin, full.fit_rbar2, full.fit_support, full.header, 3).psi)
+        fin = finalize_vgt_products(copy(full.Q), copy(full.U), copy(full.I), 1; fitted_weight=copy(full.W))
+        rebinned = bin_products(fin, full.fit_rbar2, full.fit_support, full.header, 3)
+        @test isequal(binned.psi, rebinned.psi)
+        @test isequal(binned.reliability, Float32.(rebinned.reliability))
+        @test all(r -> isnan(r) || 0 <= r <= 1 + 1e-6, binned.reliability)
 
         gal = run_pipeline(VGTConfig(; base..., output_dir=joinpath(dir, "gal"), output_bin=3, angle_frame=:galactic))
         @test isequal(gal.psi, pixel_to_position_angle(binned.psi, binned.header; frame=:galactic))

@@ -10,8 +10,10 @@ Primary science outputs:
 
 - `psi_*.fits` - 2D angle map in radians.
 - `psi_reliability_*.fits` - smoothed Stokes coherence map,
-  `P = sqrt(Q^2 + U^2) / I`.
-- `psi_fit_rbar2_*.fits` - fitter-level doubled-angle coherence diagnostic.
+  `P = sqrt(Q^2 + U^2) / W` in [0, 1], where `W` is the summed Stokes weight of
+  the fitted windows (definition of 2026-11-25, `docs/decisions.md`).
+- `psi_fit_rbar2_*.fits` - fitter-level doubled-angle coherence diagnostic. It
+  stores the mean resultant length R̄, not R̄²; the name is kept.
 - `psi_support_*.fits` - fraction of velocity channels with successful local
   VGT fits per sky pixel.
 - `psi_plot_*.png` and `run_metadata.toml` - quick-look plot (skipped for an
@@ -56,9 +58,12 @@ The right question is not "can we do this?" but:
 
 - `:axial_vonmises` is the production default. It is an unbinned axial circular
   estimator on doubled angles.
-  It is the only fitter. The Gaussian-histogram fitters, the legacy-matching
-  modes and `separable_shrinkage` noise were removed in 0.1.0 because validation
-  found them worse; they live in the archived private repository (see
+  It is the only fitter. The Gaussian-histogram fitter was removed in 0.1.0.
+  The 2026-11 estimator audit (branch `estimator-audit`) found it worse than
+  `:axial_vonmises` in windows with a single structure but better within about
+  9 px of filament crossings. The legacy-matching modes and
+  `separable_shrinkage` noise were removed because validation found them worse.
+  All of them live in the archived private repository (see
   `docs/provenance.md`). Config files that still set them fail with an
   explanatory error.
 
@@ -164,7 +169,8 @@ JULIA_NUM_THREADS=8 julia --project=. main.jl
 - Preserve CPU gradient semantics: checked central differences are part of the
   current production path; `:nan_edge_backward` is retained for comparisons.
 - Keep `psi_reliability` semantics unchanged unless a documented decision says
-  otherwise.
+  otherwise. Before changing it or any other output's meaning, read and extend
+  `docs/decisions.md`.
 - Treat changes to `dn`, `ker`, `min_valid`, masks, noise thresholds, fitter
   modes, chunk padding, and output support as science changes.
 - Any performance change must pass parity or validation tests on

@@ -207,21 +207,28 @@ Each chunk number `j` (from 1 to `ny_chunks`) is processed in order. Inside
    Within each local window (a `dn x dn` pixel box), the gradient angles from all
    valid pixels are collected. The production default, `:axial_vonmises`, uses
    doubled-angle circular statistics to estimate one headless orientation and
-   the `rbar2` coherence diagnostic. It is the only fitter; the older Gaussian
-   histogram fit was removed after validation found it worse.
+   the `rbar2` coherence diagnostic (the mean resultant length R̄, not R̄²). It
+   is the only fitter. The older Gaussian histogram fit was removed; it is worse
+   in windows with one structure but better close to filament crossings.
 
 4. **Convert to Stokes Q and U**
    The dominant gradient angle `θ` is converted:
    ```
-   Q += intensity × cos(2θ)
-   U += intensity × sin(2θ)
+   w  = max(intensity, 0)     <- intensity at the window centre
+   Q += w × cos(2θ)
+   U += w × sin(2θ)
+   W += w
    ```
    The intensity weighting means brighter pixels contribute more to the average,
-   which is physically appropriate.
+   which is physically appropriate. Negative centre intensities (noise near zero
+   emission) get weight 0 instead of a negative vote. `W` adds up the weights
+   that actually went into Q and U; it is the denominator of the reliability
+   map.
 
 5. **Trim the padding and save to disk**
-   The overlap rows are trimmed off, and the result — a 2D Q map and a 2D U map
-   for this strip — is saved to a small file (`chunk_2d_j.jld2`).
+   The overlap rows are trimmed off, and the result (2D Q, U, W maps and the
+   channel-summed intensity I for this strip) is saved to a small file
+   (`chunk_2d_j.jld2`).
 
 ---
 
@@ -232,12 +239,14 @@ for j in 1:ny_chunks
     q_stitched[:, y_start:y_end] = q_chunk_accum
     u_stitched[:, y_start:y_end] = file["u"]
     intensity_stitched[:, y_start:y_end] = file["i"]
+    weight_stitched[:, y_start:y_end] = file["w"]
 end
 ```
 
 The saved strip files are loaded one by one and placed into the correct rows of
-three full-size 2D arrays: `q_stitched`, `u_stitched`, and
-`intensity_stitched` (total intensity).
+four full-size 2D arrays: `q_stitched`, `u_stitched`, `intensity_stitched`
+(total intensity, used as the sky mask) and `weight_stitched` (summed weight of
+the fitted windows).
 
 ---
 
@@ -279,6 +288,11 @@ This is the key formula:
 The result `psi` is a 2D array where each pixel holds the inferred magnetic field
 angle (in radians) at that sky position.
 
+The reliability map is `sqrt(Q^2 + U^2) / W`, with `W` smoothed exactly like Q
+and U. It is 1 when every fitted window near a pixel agrees on one orientation
+and drops towards 0 when they disagree. Because Q, U and W are sums of the same
+weights over the same pixels, it cannot exceed 1.
+
 ---
 
 ### Step 8: Save Results
@@ -313,9 +327,9 @@ By default, results are saved in a parameter-named directory under
 
 | File | Contents |
 |---|---|
-| `chunk_2d_1.jld2` ... `chunk_2d_<ny_chunks>.jld2` | Intermediate per-strip Q, U, I arrays |
+| `chunk_2d_1.jld2` ... `chunk_2d_<ny_chunks>.jld2` | Intermediate per-strip Q, U, W, I arrays |
 | `psi_<input-stem>.fits` | Final 2D magnetic field angle map (in radians) |
-| `psi_reliability_<input-stem>.fits` | Stokes coherence/reliability map |
+| `psi_reliability_<input-stem>.fits` | Stokes coherence `sqrt(Q^2+U^2)/W`, in [0, 1] |
 | `psi_fit_rbar2_<input-stem>.fits` | Fitter coherence diagnostic |
 | `psi_support_<input-stem>.fits` | Fraction of velocity channels with successful local fits |
 | `psi_plot_<input-stem>.png` | Quick-look color image of the angle map (not written when the map has no finite pixel) |
@@ -337,13 +351,13 @@ data/exp_raw/CO_data_reproject.fits   (3D cube: x, y, velocity)
          – Compute x/y intensity gradients
          – Estimate the dominant local gradient angle
          – Accumulate into Q, U (Stokes parameters)
-     • Save strip Q, U, I to disk
+     • Save strip Q, U, W, I to disk
          │
          ▼
-   Stitch strips → q_stitched, u_stitched, intensity_stitched
+   Stitch strips → q_stitched, u_stitched, weight_stitched, intensity_stitched
          │
          ▼
-   Gaussian smooth Q, U, I  (reduce noise)
+   Gaussian smooth Q, U, W  (reduce noise; I only masks sky)
          │
          ▼
    Mask zero-intensity pixels → NaN

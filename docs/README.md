@@ -18,6 +18,9 @@ evidence, or reference).
 - `validation-angle-calibration.md` — grid-locked angle bias of the gradient
   stencils on synthetic fields with known angles, and the opt-in
   `isotropic_checked` stencil. Validation evidence.
+- `decisions.md` — dated decisions that change the meaning of an output
+  (2026-11-25: `psi_reliability` normalised by the fitted Stokes weight). Active
+  reference.
 - `provenance.md` — where the method and this implementation come from, and
   why the legacy prototype and its matching modes are not included. Active
   reference.
