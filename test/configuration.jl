@@ -424,6 +424,48 @@ end
     @test_throws ArgumentError VGT.VGTConfig(values(ny_chunks=:foo))
 end
 
+@testset "config defaults and required TOML keys" begin
+    cfg = VGT.VGTConfig(input_file="in.fits", noise=1.0, dn=20, ker=4)
+    defaults = (
+        input_file = "in.fits", output_dir = "subcube", keep_intermediate_chunks = true,
+        noise = 1.0, dn = 20, ker = 4, ny_chunks = 1, min_valid = 100,
+        fitter_mode = :axial_vonmises, rbar2_weight = false, noise_mode = :scalar,
+        noise_tile_size = 128, zero_stokes_policy = :nan_before_smoothing,
+        output_support_mode = :smoothed_stokes_support, gradient_mode = :central_checked,
+        noise_sigma_multiplier = 1.0, rbar2_gate = 0.0, weight_file = "",
+        angle_frame = :pixel, output_bin = 1, velocity_range_kms = Float64[],
+        gradient_whiten = false, gradient_noise_cov = Float64[],
+        gradient_noise_cov_file = "", edge_mask = false)
+    @test NamedTuple{fieldnames(VGT.VGTConfig)}(Tuple(getfield(cfg, f) for f in fieldnames(VGT.VGTConfig))) == defaults
+
+    # A TOML file must set these even though some have keyword defaults: a run
+    # should not silently pick up a default for its output folder, chunking or window threshold.
+    required = (input = ("input_file" => "\"in.fits\"", "output_dir" => "\"out\""),
+                noise = ("noise" => "1.0",),
+                vgt = ("dn" => "20", "ker" => "4", "min_valid" => "100"),
+                execution = ("ny_chunks" => "1",))
+    function toml(; skip="")
+        io = IOBuffer()
+        for (table, entries) in pairs(required)
+            println(io, "[$table]")
+            for (key, val) in entries
+                key == skip || println(io, "$key = $val")
+            end
+        end
+        return String(take!(io))
+    end
+
+    mktempdir() do dir
+        path = joinpath(dir, "config.toml")
+        write(path, toml())
+        @test VGT.load_config(path).min_valid == 100
+        for entries in required, (key, _) in entries
+            write(path, toml(skip=key))
+            @test_throws ArgumentError VGT.load_config(path)
+        end
+    end
+end
+
 @testset "auto execution trades chunks for memory" begin
     cfg = VGT.VGTConfig(input_file="dummy.fits", output_dir="out", noise=1.0, dn=20, ker=4,
                         ny_chunks=:auto)
