@@ -232,6 +232,66 @@ end
         @test VGT.resolve_execution_config(wcfg, 64, 64, 4).weight_file == "w.fits"
     end
 
+    # Every key, in the table the example config documents, reaches its field.
+    mktempdir() do dir
+        path = joinpath(dir, "all.toml")
+        write(path, """
+        [input]
+        input_file = "c.fits"
+        output_dir = "o"
+        keep_intermediate_chunks = false
+        weight_file = "w.fits"
+        velocity_range_kms = [1.0, 5.0]
+
+        [noise]
+        noise = 0.3
+        noise_mode = "channel"
+        noise_tile_size = 32
+        noise_sigma_multiplier = 2.0
+        gradient_whiten = true
+        gradient_noise_cov = [0.3, 0.2, 0.05]
+
+        [vgt]
+        dn = 12
+        ker = 2
+        min_valid = 10
+        fitter_mode = "axial_vonmises"
+        zero_stokes_policy = "keep_zero_before_smoothing"
+        output_support_mode = "direct_fit_support"
+        gradient_mode = "sobel_checked"
+        rbar2_weight = true
+        rbar2_gate = 0.3
+        angle_frame = "galactic"
+        output_bin = 2
+        edge_mask = true
+
+        [execution]
+        ny_chunks = 4
+        """)
+        expected = VGT.VGTConfig(
+            input_file="c.fits", output_dir="o", keep_intermediate_chunks=false,
+            weight_file="w.fits", velocity_range_kms=[1.0, 5.0], noise=0.3, noise_mode=:channel,
+            noise_tile_size=32, noise_sigma_multiplier=2.0, gradient_whiten=true,
+            gradient_noise_cov=[0.3, 0.2, 0.05], dn=12, ker=2, min_valid=10,
+            fitter_mode=:axial_vonmises, zero_stokes_policy=:keep_zero_before_smoothing,
+            output_support_mode=:direct_fit_support, gradient_mode=:sobel_checked,
+            rbar2_weight=true, rbar2_gate=0.3, angle_frame=:galactic, output_bin=2,
+            edge_mask=true, ny_chunks=4)
+        loaded = VGT.load_config(path)
+        for f in fieldnames(VGT.VGTConfig)
+            @test getfield(loaded, f) == getfield(expected, f)
+        end
+        # No field is left at its default, so a key that is dropped shows up here.
+        defaults = VGT.VGTConfig(input_file="c.fits", noise=0.3, dn=12, ker=2)
+        # gradient_noise_cov_file is exclusive with gradient_noise_cov, so it gets its own load.
+        @test all(f -> getfield(loaded, f) != getfield(defaults, f) ||
+                       f in (:input_file, :noise, :dn, :ker, :fitter_mode, :gradient_noise_cov_file),
+                  fieldnames(VGT.VGTConfig))
+        write(path, replace(read(path, String), "gradient_noise_cov = [0.3, 0.2, 0.05]" =>
+                            "gradient_noise_cov_file = \"cov.fits\""))
+        @test VGT.load_config(path).gradient_noise_cov_file == "cov.fits"
+    end
+
     mktempdir() do dir
         path = joinpath(dir, "bad.toml")
         write(path, """
@@ -353,18 +413,27 @@ end
     end
 end
 
-@testset "auto execution formulas" begin
-    @test VGT.choose_auto_threads(1) == 1
-    @test VGT.choose_auto_threads(6) == 6
-    @test VGT.choose_auto_threads(64) == 64
+@testset "auto execution trades chunks for memory" begin
+    cfg = VGT.VGTConfig(input_file="dummy.fits", output_dir="out", noise=1.0, dn=20, ker=4,
+                        ny_chunks=:auto)
+    nx, ny, nv = 300, 300, 50
+    pad = VGT.chunk_padding_pixels(cfg)
+    chunks_for(budget) = VGT.choose_auto_execution(cfg, nx, ny, nv, 8, budget).ny_chunks
+    peak(chunks) = VGT.estimate_peak_chunk_bytes(nx, nv, cld(ny, chunks) + 2 * pad)
 
-    @test VGT.choose_auto_chunks(300, 20, 4) == 8
-    @test VGT.choose_auto_chunks(300, 10, 4) == 8
-    @test VGT.choose_auto_chunks(12, 20, 4) == 1
+    budgets = [typemax(Int) ÷ 4, 12_000_000, 6_000_000, 4_000_000, 3_000_000]
+    chunks = chunks_for.(budgets)
+    @test all(c -> 1 <= c <= ny, chunks)
+    @test all(peak.(chunks) .<= budgets)
+    @test issorted(chunks)   # a tighter budget never means fewer chunks
+    @test chunks[end] > chunks[1]
 
-    @test VGT.estimate_peak_chunk_bytes(100, 10, 20) ==
-          100 * 20 * 10 * 4 + 5 * 100 * 20 * 8
+    # Too little memory for even one-row chunks is an error, not a silent overrun.
+    @test_throws ArgumentError chunks_for(1_000)
 
+    # An explicit chunk count that fits the budget is kept.
+    fixed = VGT.config_with(cfg; ny_chunks=3)
+    @test VGT.choose_auto_execution(fixed, nx, ny, nv, 8, typemax(Int) ÷ 4).ny_chunks == 3
 end
 
 @testset "auto execution resolver choices" begin

@@ -6,13 +6,13 @@
 const ANGLE_FRAMES = (:pixel, :galactic, :icrs)
 # :isotropic_checked is opt-in (docs/validation-angle-calibration.md); :central_checked is the default.
 const GRADIENT_MODES = (:central_checked, :sobel_checked, :isotropic_checked, :nan_edge_backward)
+const FITTER_MODES = (:axial_vonmises,)
+const NOISE_MODES = (:scalar, :channel, :spatial, :separable, :auto)
+const ZERO_STOKES_POLICIES = (:nan_before_smoothing, :keep_zero_before_smoothing)
+const OUTPUT_SUPPORT_MODES = (:smoothed_stokes_support, :direct_fit_support)
 
-function normalize_angle_frame(value)
-    frame = _symbol_config_value(value)
-    frame in ANGLE_FRAMES && return frame
-    throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(value)"))
-end
-
+# Adding a field takes two edits: the struct field and its CONFIG_SPEC line below.
+# Range checks go in _validate_config. Keyword, positional and TOML construction follow.
 struct VGTConfig
     input_file::String
     output_dir::String
@@ -63,159 +63,117 @@ struct VGTConfig
     # array border (see `_edge_footprint_mask`). Off by default.
     edge_mask::Bool
 
-    function VGTConfig(input_file::String, output_dir::String,
-                       keep_intermediate_chunks::Bool, noise::Float64, dn::Int, ker::Int,
-                       ny_chunks::Union{Int, Symbol},
-                       min_valid::Int,
-                       fitter_mode::Symbol,
-                       rbar2_weight::Bool,
-                       noise_mode::Symbol, noise_tile_size::Int,
-                       zero_stokes_policy::Symbol, output_support_mode::Symbol,
-                       gradient_mode::Symbol,
-                       noise_sigma_multiplier::Float64,
-                       rbar2_gate::Float64,
-                       weight_file::String="",
-                       angle_frame::Symbol=:pixel,
-                       output_bin::Int=1,
-                       velocity_range_kms::Vector{Float64}=Float64[],
-                       gradient_whiten::Bool=false,
-                       gradient_noise_cov::Vector{Float64}=Float64[],
-                       gradient_noise_cov_file::String="",
-                       edge_mask::Bool=false)
-        # Validate here so invalid science settings fail before a large FITS
-        # cube run starts.
-        _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
-                                noise_mode, noise_tile_size,
-                                noise_sigma_multiplier, zero_stokes_policy,
-                                output_support_mode, gradient_mode, rbar2_gate,
-                                gradient_whiten, gradient_noise_cov, gradient_noise_cov_file)
-        angle_frame in ANGLE_FRAMES ||
-            throw(ArgumentError("angle_frame must be one of $(join(ANGLE_FRAMES, ", ")); got $(angle_frame)"))
-        output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(output_bin)"))
-        isempty(velocity_range_kms) || (length(velocity_range_kms) == 2 && all(isfinite, velocity_range_kms) &&
-                                        velocity_range_kms[1] < velocity_range_kms[2]) ||
-            throw(ArgumentError("velocity_range_kms must be empty or [lo, hi] with lo < hi; got $(velocity_range_kms)"))
-        return new(input_file, output_dir, keep_intermediate_chunks, noise, dn, ker,
-                   ny_chunks, min_valid, fitter_mode,
-                   rbar2_weight, noise_mode,
-                   noise_tile_size, zero_stokes_policy, output_support_mode,
-                   gradient_mode, noise_sigma_multiplier,
-                   rbar2_gate, weight_file, angle_frame, output_bin, velocity_range_kms,
-                   gradient_whiten, gradient_noise_cov, gradient_noise_cov_file, edge_mask)
+    # Takes every field, already normalized, in field order. The public
+    # constructors below build the tuple; this one validates it so invalid
+    # science settings fail before a large FITS cube run starts.
+    function VGTConfig(values::Tuple)
+        _validate_config(NamedTuple{fieldnames(VGTConfig)}(values))
+        return new(values...)
     end
 end
 
-function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
-                   keep_intermediate_chunks::Bool, noise, dn, ker,
-                   ny_chunks=1, min_valid=100,
-                   fitter_mode=:axial_vonmises,
-                   rbar2_weight=false, noise_mode=:scalar,
-                   noise_tile_size=128, zero_stokes_policy=:nan_before_smoothing,
-                   output_support_mode=:smoothed_stokes_support,
-                   gradient_mode=:central_checked,
-                   noise_sigma_multiplier=1.0,
-                   rbar2_gate=0.0,
-                   weight_file="",
-                   angle_frame=:pixel,
-                   output_bin=1,
-                   velocity_range_kms=Float64[],
-                   gradient_whiten=false,
-                   gradient_noise_cov=Float64[],
-                   gradient_noise_cov_file="",
-                   edge_mask=false)
-    return VGTConfig(
-        String(input_file),
-        String(output_dir),
-        keep_intermediate_chunks,
-        Float64(noise),
-        Int(dn),
-        Int(ker),
-        normalize_execution_setting(ny_chunks, :ny_chunks),
-        Int(min_valid),
-        normalize_fitter_mode(fitter_mode),
-        Bool(rbar2_weight),
-        normalize_noise_mode(noise_mode),
-        Int(noise_tile_size),
-        normalize_zero_stokes_policy(zero_stokes_policy),
-        normalize_output_support_mode(output_support_mode),
-        normalize_gradient_mode(gradient_mode),
-        Float64(noise_sigma_multiplier),
-        Float64(rbar2_gate),
-        String(weight_file),
-        normalize_angle_frame(angle_frame),
-        Int(output_bin),
-        collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
-        Bool(gradient_whiten),
-        collect(Float64, gradient_noise_cov),
-        String(gradient_noise_cov_file),
-        Bool(edge_mask),
-    )
+# One entry per VGTConfig field, in field order: the TOML table the key lives
+# in, its default (none = required), whether a TOML file must set it even when
+# it has a default, and an optional normalizer. Without a normalizer the value
+# is converted to the field's type.
+const CONFIG_SPEC = (
+    input_file = (table="input",),
+    output_dir = (table="input", default="subcube", toml_required=true),
+    keep_intermediate_chunks = (table="input", default=true),
+    noise = (table="noise",),
+    dn = (table="vgt",),
+    ker = (table="vgt",),
+    ny_chunks = (table="execution", default=1, toml_required=true,
+                 normalize=v -> normalize_execution_setting(v, :ny_chunks)),
+    min_valid = (table="vgt", default=100, toml_required=true),
+    fitter_mode = (table="vgt", default=:axial_vonmises,
+                   normalize=v -> _normalize_mode(v, :fitter_mode, FITTER_MODES)),
+    rbar2_weight = (table="vgt", default=false),
+    noise_mode = (table="noise", default=:scalar,
+                  normalize=v -> _normalize_mode(v, :noise_mode, NOISE_MODES)),
+    noise_tile_size = (table="noise", default=128),
+    zero_stokes_policy = (table="vgt", default=:nan_before_smoothing,
+                          normalize=v -> _normalize_mode(v, :zero_stokes_policy, ZERO_STOKES_POLICIES)),
+    output_support_mode = (table="vgt", default=:smoothed_stokes_support,
+                           normalize=v -> _normalize_mode(v, :output_support_mode, OUTPUT_SUPPORT_MODES)),
+    gradient_mode = (table="vgt", default=:central_checked,
+                     normalize=v -> _normalize_mode(v, :gradient_mode, GRADIENT_MODES)),
+    noise_sigma_multiplier = (table="noise", default=1.0),
+    rbar2_gate = (table="vgt", default=0.0),
+    weight_file = (table="input", default=""),
+    angle_frame = (table="vgt", default=:pixel,
+                   normalize=v -> _normalize_mode(v, :angle_frame, ANGLE_FRAMES)),
+    output_bin = (table="vgt", default=1),
+    velocity_range_kms = (table="input", default=Float64[]),
+    gradient_whiten = (table="noise", default=false),
+    gradient_noise_cov = (table="noise", default=Float64[]),
+    gradient_noise_cov_file = (table="noise", default=""),
+    edge_mask = (table="vgt", default=false),
+)
+keys(CONFIG_SPEC) == fieldnames(VGTConfig) ||
+    error("CONFIG_SPEC must list every VGTConfig field, in field order")
+
+# Config keys removed in 0.1.0 and the only value each still tolerates (its old
+# default, which changes nothing). Any other value would have changed the science.
+const OBSOLETE_CONFIG_KEYS = (
+    finalize_mask_mode = (table="vgt", old_default=:strict_nonpositive),
+    histogram_edge_mode = (table="vgt", old_default=:modern_range),
+    gradient_sample_mode = (table="vgt", old_default=:paired_finite),
+    noise_spatial_exponent = (table="noise", old_default=1.0),
+    noise_channel_exponent = (table="noise", old_default=1.0),
+)
+
+_coerce(::Type{Vector{Float64}}, value) = collect(Float64, value)  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
+_coerce(T::Type, value) = T(value)
+
+function _normalize_field(name::Symbol, value)
+    spec = CONFIG_SPEC[name]
+    haskey(spec, :normalize) && return spec.normalize(value)
+    return _coerce(fieldtype(VGTConfig, name), value)
 end
 
-function VGTConfig(; input_file::AbstractString, output_dir::AbstractString="subcube",
-                   keep_intermediate_chunks::Bool=true, noise=nothing, dn, ker,
-                   ny_chunks=1, n_threads=nothing, min_valid=100,
-                   fitter_mode=:axial_vonmises,
-                   rbar2_weight=false, noise_mode=:scalar,
-                   noise_tile_size=128,
-                   zero_stokes_policy=:nan_before_smoothing,
-                   output_support_mode=:smoothed_stokes_support,
-                   gradient_mode=:central_checked,
-                   noise_sigma_multiplier=1.0,
-                   rbar2_gate=0.0,
-                   weight_file="",
-                   angle_frame=:pixel,
-                   output_bin=1,
-                   velocity_range_kms=Float64[],
-                   gradient_whiten=false,
-                   gradient_noise_cov=Float64[],
-                   gradient_noise_cov_file="",
-                   edge_mask=false,
-                   # Removed in 0.1.0; only the old default value is tolerated.
-                   finalize_mask_mode=nothing,
-                   histogram_edge_mode=nothing,
-                   gradient_sample_mode=nothing,
-                   noise_spatial_exponent=nothing,
-                   noise_channel_exponent=nothing)
-    _check_obsolete_keys(; finalize_mask_mode, histogram_edge_mode, gradient_sample_mode,
-                         noise_spatial_exponent, noise_channel_exponent)
-    noise === nothing && throw(ArgumentError("Missing required keyword `noise`"))
+# VGTConfig from fields given by name; the rest take their defaults.
+function _build_config(given::AbstractDict{Symbol})
+    unknown = setdiff(keys(given), fieldnames(VGTConfig))
+    isempty(unknown) ||
+        throw(ArgumentError("Unknown VGTConfig field(s): $(join(sort!(collect(unknown)), ", "))"))
+    values = map(fieldnames(VGTConfig)) do name
+        spec = CONFIG_SPEC[name]
+        raw = if haskey(given, name)
+            given[name]
+        elseif haskey(spec, :default)
+            spec.default
+        else
+            throw(ArgumentError("Missing required keyword `$name`"))
+        end
+        _normalize_field(name, raw)
+    end
+    return VGTConfig(values)
+end
+
+# Positional form: fields in declaration order, the first six required.
+function VGTConfig(input_file::AbstractString, output_dir::AbstractString,
+                   keep_intermediate_chunks::Bool, noise, dn, ker, rest...)
+    args = (input_file, output_dir, keep_intermediate_chunks, noise, dn, ker, rest...)
+    length(args) <= fieldcount(VGTConfig) ||
+        throw(ArgumentError("VGTConfig takes at most $(fieldcount(VGTConfig)) positional arguments; got $(length(args))"))
+    return _build_config(Dict{Symbol, Any}(zip(fieldnames(VGTConfig), args)))
+end
+
+function VGTConfig(; n_threads=nothing, kwargs...)
+    given = Dict{Symbol, Any}(kwargs)
+    _check_obsolete_keys(given)
     n_threads === nothing ||
         @warn "`n_threads` no longer controls execution; start Julia with `--threads=N` or set JULIA_NUM_THREADS" maxlog=1
-    return VGTConfig(
-        String(input_file),
-        String(output_dir),
-        keep_intermediate_chunks,
-        Float64(noise),
-        Int(dn),
-        Int(ker),
-        normalize_execution_setting(ny_chunks, :ny_chunks),
-        Int(min_valid),
-        normalize_fitter_mode(fitter_mode),
-        Bool(rbar2_weight),
-        normalize_noise_mode(noise_mode),
-        Int(noise_tile_size),
-        normalize_zero_stokes_policy(zero_stokes_policy),
-        normalize_output_support_mode(output_support_mode),
-        normalize_gradient_mode(gradient_mode),
-        Float64(noise_sigma_multiplier),
-        Float64(rbar2_gate),
-        String(weight_file),
-        normalize_angle_frame(angle_frame),
-        Int(output_bin),
-        collect(Float64, velocity_range_kms),  # Float64.(x) of an empty Vector{Any} stays Vector{Any}
-        Bool(gradient_whiten),
-        collect(Float64, gradient_noise_cov),
-        String(gradient_noise_cov_file),
-        Bool(edge_mask),
-    )
+    foreach(key -> delete!(given, key), keys(OBSOLETE_CONFIG_KEYS))
+    return _build_config(given)
 end
 
 # Copy of `cfg` with some fields replaced. Copies every field by name, so a new
 # field cannot be dropped by a hand-written field list.
 function config_with(cfg::VGTConfig; changes...)
-    values = (haskey(changes, f) ? changes[f] : getfield(cfg, f) for f in fieldnames(VGTConfig))
-    return VGTConfig(values...)
+    return _build_config(Dict{Symbol, Any}(
+        f => (haskey(changes, f) ? changes[f] : getfield(cfg, f)) for f in fieldnames(VGTConfig)))
 end
 
 function _symbol_config_value(value)
@@ -249,31 +207,16 @@ function _normalize_mode(value, name::Symbol, allowed::Tuple)
     mode in allowed && return mode
     mode in get(REMOVED_OPTION_VALUES, name, ()) &&
         throw(ArgumentError("$(name)=$(repr(mode)) was $REMOVED_IN_0_1_0"))
-    throw(ArgumentError("$(name) must be one of $(join(repr.(allowed), ", ", ", or ")); got $(repr(value))"))
+    choices = length(allowed) == 2 ? join(repr.(allowed), " or ") : join(repr.(allowed), ", ", ", or ")
+    throw(ArgumentError("$(name) must be one of $choices; got $(repr(value))"))
 end
 
-normalize_fitter_mode(value) = _normalize_mode(value, :fitter_mode, (:axial_vonmises,))
-normalize_noise_mode(value) =
-    _normalize_mode(value, :noise_mode, (:scalar, :channel, :spatial, :separable, :auto))
-normalize_gradient_mode(value) =
-    _normalize_mode(value, :gradient_mode, GRADIENT_MODES)
-
-# Config keys removed in 0.1.0 and the only value each still tolerates (its old
-# default, which changes nothing). Any other value would have changed the science.
-const OBSOLETE_CONFIG_KEYS = Dict(
-    :finalize_mask_mode => :strict_nonpositive,
-    :histogram_edge_mode => :modern_range,
-    :gradient_sample_mode => :paired_finite,
-    :noise_spatial_exponent => 1.0,
-    :noise_channel_exponent => 1.0,
-)
-
-function _check_obsolete_keys(; kwargs...)
-    for (key, value) in kwargs
+function _check_obsolete_keys(given::AbstractDict{Symbol})
+    for (key, spec) in pairs(OBSOLETE_CONFIG_KEYS)
+        value = get(given, key, nothing)
         value === nothing && continue
-        default = OBSOLETE_CONFIG_KEYS[key]
-        given = default isa Symbol ? _obsolete_symbol(value) : value
-        if given == default
+        seen = spec.old_default isa Symbol ? _obsolete_symbol(value) : value
+        if seen == spec.old_default
             @warn "Config key `$key` is obsolete and ignored (value $(repr(value)) is the old default)"
         else
             throw(ArgumentError("$key=$(repr(value)) was $REMOVED_IN_0_1_0"))
@@ -284,47 +227,32 @@ end
 
 _obsolete_symbol(value) = value isa Union{Symbol, AbstractString} ? _symbol_config_value(value) : value
 
-function normalize_zero_stokes_policy(value)
-    mode = _symbol_config_value(value)
-    mode in (:nan_before_smoothing, :keep_zero_before_smoothing) && return mode
-    throw(ArgumentError("zero_stokes_policy must be one of :nan_before_smoothing or :keep_zero_before_smoothing; got $(repr(value))"))
-end
-
-function normalize_output_support_mode(value)
-    mode = _symbol_config_value(value)
-    mode in (:smoothed_stokes_support, :direct_fit_support) && return mode
-    throw(ArgumentError("output_support_mode must be one of :smoothed_stokes_support or :direct_fit_support; got $(repr(value))"))
-end
-
-function _validate_config_fields(noise, dn, ker, min_valid, fitter_mode,
-                                 noise_mode, noise_tile_size,
-                                 noise_sigma_multiplier, zero_stokes_policy,
-                                 output_support_mode, gradient_mode,
-                                 rbar2_gate=0.0, gradient_whiten=false,
-                                 gradient_noise_cov=Float64[], gradient_noise_cov_file="")
-    noise > 0 || throw(ArgumentError("noise must be > 0"))
-    dn >= 2 || throw(ArgumentError("dn must be >= 2"))
+# Settings the kernel also takes as loose keywords (VGT_QU_mv_2d is a public
+# entry point), so the kernel and the config share these checks.
+function _check_kernel_settings(dn, min_valid, rbar2_gate)
     iseven(dn) || throw(ArgumentError("dn must be even; got $dn"))
-    ker >= 1 || throw(ArgumentError("ker must be >= 1"))
     min_valid >= 1 || throw(ArgumentError("min_valid must be >= 1"))
     min_valid <= dn * dn ||
         throw(ArgumentError("min_valid=$min_valid exceeds the maximum window area dn^2=$(dn * dn)"))
-    fitter_mode === :axial_vonmises ||
-        throw(ArgumentError("Unsupported fitter_mode=$fitter_mode"))
-    noise_mode in (:scalar, :channel, :spatial, :separable, :auto) ||
-        throw(ArgumentError("Unsupported noise_mode=$noise_mode"))
-    noise_tile_size >= 1 || throw(ArgumentError("noise_tile_size must be >= 1"))
-    noise_sigma_multiplier > 0 ||
-        throw(ArgumentError("noise_sigma_multiplier must be > 0"))
-    zero_stokes_policy in (:nan_before_smoothing, :keep_zero_before_smoothing) ||
-        throw(ArgumentError("Unsupported zero_stokes_policy=$zero_stokes_policy"))
-    output_support_mode in (:smoothed_stokes_support, :direct_fit_support) ||
-        throw(ArgumentError("Unsupported output_support_mode=$output_support_mode"))
-    gradient_mode in GRADIENT_MODES ||
-        throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
     0.0 <= rbar2_gate <= 1.0 ||
         throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
-    _validate_gradient_whiten(gradient_whiten, gradient_noise_cov, gradient_noise_cov_file, gradient_mode)
+    return nothing
+end
+
+# Checks the normalized fields (a NamedTuple in field order) at construction.
+function _validate_config(c)
+    c.noise > 0 || throw(ArgumentError("noise must be > 0"))
+    c.dn >= 2 || throw(ArgumentError("dn must be >= 2"))
+    c.ker >= 1 || throw(ArgumentError("ker must be >= 1"))
+    _check_kernel_settings(c.dn, c.min_valid, c.rbar2_gate)
+    c.noise_tile_size >= 1 || throw(ArgumentError("noise_tile_size must be >= 1"))
+    c.noise_sigma_multiplier > 0 ||
+        throw(ArgumentError("noise_sigma_multiplier must be > 0"))
+    c.output_bin >= 1 || throw(ArgumentError("output_bin must be a positive integer; got $(c.output_bin)"))
+    isempty(c.velocity_range_kms) || (length(c.velocity_range_kms) == 2 && all(isfinite, c.velocity_range_kms) &&
+                                      c.velocity_range_kms[1] < c.velocity_range_kms[2]) ||
+        throw(ArgumentError("velocity_range_kms must be empty or [lo, hi] with lo < hi; got $(c.velocity_range_kms)"))
+    _validate_gradient_whiten(c.gradient_whiten, c.gradient_noise_cov, c.gradient_noise_cov_file, c.gradient_mode)
     return nothing
 end
 
@@ -348,16 +276,6 @@ function _validate_gradient_whiten(gradient_whiten, gradient_noise_cov, gradient
     return nothing
 end
 
-function validate_static_config(cfg::VGTConfig)
-    _validate_config_fields(cfg.noise, cfg.dn, cfg.ker, cfg.min_valid,
-                            cfg.fitter_mode, cfg.noise_mode, cfg.noise_tile_size,
-                            cfg.noise_sigma_multiplier, cfg.zero_stokes_policy,
-                            cfg.output_support_mode, cfg.gradient_mode,
-                            cfg.rbar2_gate, cfg.gradient_whiten, cfg.gradient_noise_cov,
-                            cfg.gradient_noise_cov_file)
-    return cfg
-end
-
 function chunk_padding_pixels(cfg::VGTConfig)
     # Rows a chunk reads beyond its own: a window centred on row j covers rows
     # j - dn/2 + 1 .. j + dn/2, and the central and Sobel stencils need one more
@@ -366,10 +284,6 @@ function chunk_padding_pixels(cfg::VGTConfig)
     # last window rows of every chunk NaN, so results depended on ny_chunks
     # (test/chunk_seams.jl). Final smoothing is applied only after stitching.
     return div(cfg.dn, 2) + (cfg.gradient_mode === :nan_edge_backward ? 0 : 1)
-end
-
-function choose_auto_threads(cpu_threads::Int)
-    return max(1, cpu_threads)
 end
 
 function choose_auto_chunks(ny::Int, dn::Int, n_threads::Int)
@@ -395,7 +309,7 @@ function choose_auto_execution(cfg::VGTConfig, nx::Int, ny::Int, nv::Int,
                                cpu_threads::Int, budget_bytes::Int)
     # Auto execution chooses threads and y chunks without changing the science
     # parameters. It only decides how to split the same computation in memory.
-    n_threads = choose_auto_threads(cpu_threads)
+    n_threads = max(1, cpu_threads)
     ny_chunks = cfg.ny_chunks === :auto ? choose_auto_chunks(ny, cfg.dn, n_threads) : cfg.ny_chunks
     ny_chunks = max(1, min(ny_chunks, ny))
 
@@ -425,8 +339,6 @@ end
 weight_source(cfg::VGTConfig) = isempty(cfg.weight_file) ? cfg.input_file : cfg.weight_file
 
 function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
-    validate_static_config(cfg)
-
     cfg.dn <= nx || throw(ArgumentError("dn=$(cfg.dn) is too large for nx=$nx (need nx ≥ $(cfg.dn))"))
     cfg.dn <= ny || throw(ArgumentError("dn=$(cfg.dn) is too large for ny=$ny (need ny ≥ $(cfg.dn))"))
     cfg.output_bin <= min(nx, ny) ||
@@ -447,21 +359,13 @@ function resolve_execution_config(cfg::VGTConfig, nx::Int, ny::Int, nv::Int=0)
     return config_with(cfg; ny_chunks=ny_chunks)
 end
 
-const VGT_CONFIG_TABLE_KEYS = Dict(
-    "input" => Set(["input_file", "output_dir", "keep_intermediate_chunks", "weight_file", "velocity_range_kms"]),
-    "noise" => Set([
-        "noise", "noise_mode", "noise_tile_size", "noise_sigma_multiplier",
-        "gradient_whiten", "gradient_noise_cov", "gradient_noise_cov_file",
-        "noise_spatial_exponent", "noise_channel_exponent",  # obsolete, see OBSOLETE_CONFIG_KEYS
-    ]),
-    "vgt" => Set([
-        "dn", "ker", "min_valid", "fitter_mode",
-        "zero_stokes_policy", "output_support_mode", "gradient_mode",
-        "rbar2_weight", "rbar2_gate", "angle_frame", "output_bin", "edge_mask",
-        "finalize_mask_mode", "histogram_edge_mode", "gradient_sample_mode",  # obsolete
-    ]),
-    "execution" => Set(["ny_chunks"]),
-)
+# TOML table -> allowed keys, from the field table and the obsolete keys.
+const VGT_CONFIG_TABLE_KEYS = let tables = Dict{String, Set{String}}()
+    for specs in (CONFIG_SPEC, OBSOLETE_CONFIG_KEYS), (name, spec) in pairs(specs)
+        push!(get!(Set{String}, tables, spec.table), String(name))
+    end
+    tables
+end
 
 function _flatten_toml_config(raw, abspath_path::AbstractString)
     flat = Dict{String, Any}()
@@ -492,53 +396,19 @@ function _config_key(cfg::AbstractDict, key::AbstractString, T::Type, abspath_pa
     end
 end
 
-function _config_key_or(cfg::AbstractDict, key::AbstractString, default)
-    return get(cfg, key, default)
-end
-
 function load_config(path::AbstractString="config.toml")
     abspath_path = abspath(path)
     isfile(abspath_path) || throw(ArgumentError("Config file not found: $abspath_path"))
-    cfg = _flatten_toml_config(TOML.parsefile(abspath_path), abspath_path)
-    noise = _config_key(cfg, "noise", Float64, abspath_path)
-    noise_mode = _config_key_or(cfg, "noise_mode", :scalar)
-    noise_tile_size = _config_key_or(cfg, "noise_tile_size", 128)
-    noise_sigma_multiplier = _config_key_or(cfg, "noise_sigma_multiplier", 1.0)
-
-    return validate_static_config(VGTConfig(
-        input_file=_config_key(cfg, "input_file", String, abspath_path),
-        output_dir=_config_key(cfg, "output_dir", String, abspath_path),
-        keep_intermediate_chunks=_config_key_or(cfg, "keep_intermediate_chunks", true),
-        noise=noise,
-        dn=_config_key(cfg, "dn", Int, abspath_path),
-        ker=_config_key(cfg, "ker", Int, abspath_path),
-        ny_chunks=_config_key(cfg, "ny_chunks", Any, abspath_path),
-        min_valid=_config_key(cfg, "min_valid", Int, abspath_path),
-        fitter_mode=_config_key_or(cfg, "fitter_mode", :axial_vonmises),
-        rbar2_weight=_config_key_or(cfg, "rbar2_weight", false),
-        rbar2_gate=Float64(_config_key_or(cfg, "rbar2_gate", 0.0)),
-        noise_mode=noise_mode,
-        noise_tile_size=Int(noise_tile_size),
-        noise_sigma_multiplier=Float64(noise_sigma_multiplier),
-        zero_stokes_policy=_config_key_or(cfg, "zero_stokes_policy", :nan_before_smoothing),
-        output_support_mode=_config_key_or(cfg, "output_support_mode", :smoothed_stokes_support),
-        gradient_mode=_config_key_or(cfg, "gradient_mode", :central_checked),
-        weight_file=String(_config_key_or(cfg, "weight_file", "")),
-        angle_frame=_config_key_or(cfg, "angle_frame", :pixel),
-        output_bin=_config_key_or(cfg, "output_bin", 1),
-        velocity_range_kms=_config_key_or(cfg, "velocity_range_kms", Float64[]),
-        gradient_whiten=Bool(_config_key_or(cfg, "gradient_whiten", false)),
-        gradient_noise_cov=collect(Float64, _config_key_or(cfg, "gradient_noise_cov", Float64[])),
-        gradient_noise_cov_file=String(_config_key_or(cfg, "gradient_noise_cov_file", "")),
-        edge_mask=Bool(_config_key_or(cfg, "edge_mask", false)),
-        # Obsolete keys: the constructor accepts the old default with a
-        # warning and rejects anything else.
-        finalize_mask_mode=get(cfg, "finalize_mask_mode", nothing),
-        histogram_edge_mode=get(cfg, "histogram_edge_mode", nothing),
-        gradient_sample_mode=get(cfg, "gradient_sample_mode", nothing),
-        noise_spatial_exponent=get(cfg, "noise_spatial_exponent", nothing),
-        noise_channel_exponent=get(cfg, "noise_channel_exponent", nothing),
-    ))
+    raw = _flatten_toml_config(TOML.parsefile(abspath_path), abspath_path)
+    given = Dict{Symbol, Any}(Symbol(key) => value for (key, value) in raw)
+    for (name, spec) in pairs(CONFIG_SPEC)
+        (haskey(spec, :default) && !get(spec, :toml_required, false)) && continue
+        T = fieldtype(VGTConfig, name)
+        given[name] = _config_key(raw, String(name), T isa Union ? Any : T, abspath_path)
+    end
+    # Obsolete keys go through unchanged: the constructor accepts the old
+    # default with a warning and rejects anything else.
+    return VGTConfig(; given...)
 end
 
 """
