@@ -31,7 +31,9 @@ using TOML
         chunk_path = VGT.process_chunk(1, cfg, size(cube, 2), size(cube, 3))
         @test isfile(chunk_path)
 
-        q_stitched, u_stitched, intensity_stitched, diagnostics, fit_maps = VGT.stitch_chunk_outputs(cfg, size(cube, 1), size(cube, 2))
+        q_stitched, u_stitched, intensity_stitched, weight_stitched, diagnostics, fit_maps =
+            VGT.stitch_chunk_outputs(cfg, size(cube, 1), size(cube, 2))
+        @test all(weight_stitched .>= hypot.(q_stitched, u_stitched) .- 1e-9)
         @test size(fit_maps.fit_rbar2) == (size(cube, 1), size(cube, 2))
         @test size(fit_maps.fit_support) == (size(cube, 1), size(cube, 2))
         @test all(0 .<= fit_maps.fit_support .<= 1)
@@ -40,7 +42,8 @@ using TOML
         @test diagnostics.fit_successes > 0
         @test diagnostics.fit_attempts == diagnostics.fit_successes + diagnostics.fit_failures
 
-        finalized = VGT.finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, cfg.ker)
+        finalized = VGT.finalize_vgt_products(q_stitched, u_stitched, intensity_stitched, cfg.ker;
+                                              fitted_weight=weight_stitched)
         run = VGT.PipelineRun(
             config=cfg,
             psi=finalized.psi,
@@ -48,6 +51,7 @@ using TOML
             Q=q_stitched,
             U=u_stitched,
             I=intensity_stitched,
+            W=weight_stitched,
             fit_rbar2=fit_maps.fit_rbar2,
             fit_support=fit_maps.fit_support,
             header=nothing,
@@ -57,6 +61,8 @@ using TOML
         outputs = VGT.write_pipeline_outputs(run)
         @test isfile(outputs.psi_path)
         @test isfile(outputs.reliability_path)
+        # Marks maps made with the fitted-weight denominator (docs/decisions.md).
+        @test FITS(f -> read_header(f[1]), outputs.reliability_path)["RELNORM"] == "FITWEIGHT"
         @test isfile(outputs.fit_rbar2_path)
         @test isfile(outputs.support_path)
         @test isfile(outputs.metadata_path)

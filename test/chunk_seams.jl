@@ -25,7 +25,7 @@ using Test
             @test count(isfinite, one.psi) > 0
             for n in (3, 4)
                 split = run_pipeline(VGTConfig(; base..., ny_chunks=n, output_dir=joinpath(dir, "split_$(mode)_$n")))
-                for f in (:psi, :Q, :U, :I, :fit_rbar2, :fit_support)
+                for f in (:psi, :reliability, :Q, :U, :I, :W, :fit_rbar2, :fit_support)
                     @test isequal(getfield(split, f), getfield(one, f))
                 end
             end

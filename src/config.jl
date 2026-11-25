@@ -39,7 +39,7 @@ struct VGTConfig
     # the frame VGT computes in) or an IAU position angle, east of north, in
     # :galactic or :icrs (converted per pixel through the WCS after smoothing).
     angle_frame::Symbol
-    # Output grid: 1 keeps the input grid; b > 1 averages the smoothed Q/U/I over
+    # Output grid: 1 keeps the input grid; b > 1 averages the smoothed Q/U/W over
     # b x b input-pixel blocks before psi and reliability are computed, and
     # scales the celestial WCS to match (see `bin_products`).
     output_bin::Int
@@ -226,7 +226,7 @@ function normalize_execution_setting(value, name::Symbol)
     throw(ArgumentError("$(name) must be a positive integer or :auto, got $(repr(value))"))
 end
 
-const REMOVED_IN_0_1_0 = "removed in VGT 0.1.0 (public release) because validation found it worse than the default; it remains in the archived private repository"
+const REMOVED_IN_0_1_0 = "removed in VGT 0.1.0 (public release); it remains in the archived private repository (see docs/provenance.md)"
 
 # Removed values of kept options, so a stale config gets a clear message
 # instead of a generic "unknown value" error.

@@ -112,8 +112,8 @@ end
 
 const _VGT_PRODUCT_CARDS = Dict(
     :psi => ("rad", "VGT magnetic-field orientation proxy (axial)"),
-    :reliability => ("", "smoothed Stokes coherence P = sqrt(Q^2+U^2)/I"),
-    :fit_rbar2 => ("", "fitter doubled-angle coherence rbar^2"),
+    :reliability => ("", "Stokes coherence sqrt(Q^2+U^2)/W, W=fit weight"),
+    :fit_rbar2 => ("", "fitter doubled-angle mean resultant length R"),
     :support => ("", "fraction of channels with a successful VGT fit"),
 )
 
@@ -154,6 +154,11 @@ function vgt_product_header(input_header, cfg::VGTConfig, product::Symbol)
             push!(cards, ("PSIFRAME", uppercase(String(cfg.angle_frame)), "IAU position angle, east of north in this frame"))
         end
         push!(cards, ("PSIANGLE", "BFIELD", "gradient angle + 90 deg (B-field, not pol.)"))
+    end
+    if product === :reliability
+        # Maps written before 2026-11-25 lack this card: they were normalised by
+        # the channel-summed intensity and are not comparable (docs/decisions.md).
+        push!(cards, ("RELNORM", "FITWEIGHT", "denominator: summed Stokes weight of fits"))
     end
     for (key, value, comment) in cards
         header[key] = value
