@@ -26,7 +26,9 @@ wins = map(1:nw) do _
 end
 fns = [
     ("vm (production)", (x, y) -> VGT.fit_window_result(:axial_vonmises, x, y)),
+    ("vm trig-free", (x, y) -> est_weighted(x, y, 0)),
     ("st2", (x, y) -> est_weighted(x, y, 2)),
+    ("ms4h", (x, y) -> est_meanshift(x, y, 4.0; init=:hist)),
     ("ms2", (x, y) -> est_meanshift(x, y, 2.0)),
     ("ms4", (x, y) -> est_meanshift(x, y, 4.0)),
     ("vmu", (x, y) -> est_vmu(x, y)),

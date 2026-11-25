@@ -22,7 +22,7 @@ cal = []
 for f in glob.glob(f"{d}/*_calib.csv"):
     cal += list(csv.DictReader(open(f)))
 
-ESTS = ["vm", "gauss", "ms2", "ms4", "vmu", "st1", "st2", "st2ms2", "hg100", "hg100n", "hg36"]
+ESTS = ["vm", "gauss", "ms2", "ms4", "ms4h", "vmu", "st1", "st2", "st2ms2", "hg100", "hg100n", "hg36"]
 
 
 def fl(x):
@@ -103,3 +103,33 @@ for key in sorted(c):
     lo = st.median([x[0] for x in ds if x[0] is not None])
     hi = st.median([x[9] for x in ds if x[9] is not None])
     print(f"{key[0]:4s} {key[1]:30s} {key[2]:7s} rho {st.mean(c[key]):+.2f} (n={len(c[key])})  median err lowest-conf decile {lo:6.2f}  highest {hi:5.2f}")
+
+# ---- tally: per candidate, count better / worse / within-noise rows ----------
+print()
+print("tally over scenes (MW: clean + foreground clean for planck; uni: all), raw and smoothed")
+def scene_rows(smoothed):
+    out = []
+    for (scen, ref, region), e in g.items():
+        mw = region in ("clean", "smoothed_all_signal")
+        if smoothed and region in ("smoothed_all_signal", "smoothed_all"):
+            out.append(((scen, ref), e))
+        if not smoothed and region in ("clean", "all"):
+            out.append(((scen, ref), e))
+    return out
+for smoothed in (False, True):
+    for base in ("vm", "gauss"):
+        for est in ESTS:
+            if est == base:
+                continue
+            b = w = t = 0
+            effs = []
+            for key, e in scene_rows(smoothed):
+                if est not in e or base not in e:
+                    continue
+                v = verdict(e[est], e[base])
+                if v == "n/a":
+                    continue
+                effs.append(f"{key[0][:12]}{'/fg' if key[1]=='foreground' else ''}:{v.split('(')[0]}")
+                b += v.endswith("better"); w += v.endswith("worse"); t += v.endswith("~")
+            if b + w + t:
+                print(f"{'smoothed' if smoothed else 'raw':8s} {est:7s} vs {base:5s} better {b:2d} worse {w:2d} within-noise {t:2d} | " + " ".join(effs))
