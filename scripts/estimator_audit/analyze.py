@@ -40,6 +40,10 @@ def sign_p(k, n):
     return min(1.0, 2 * sum(math.comb(n, i) for i in range(m + 1)) / 2 ** n)
 
 
+import os
+EXCL = {int(x) for x in os.environ.get("EXCLUDE_SEEDS", "").split(",") if x}
+rows = [r for r in rows if int(r["seed"]) not in EXCL]
+cal = [r for r in cal if int(r["seed"]) not in EXCL]
 g = defaultdict(dict)  # (scen, ref, region) -> est -> seed -> row
 for r in rows:
     g[(r["scenario"], r["reference"], r["region"])].setdefault(r["estimator"], {})[int(r["seed"])] = r

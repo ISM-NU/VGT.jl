@@ -59,7 +59,7 @@ end
 
 # Mean shift to the mode of a von Mises kernel density of doubled angles:
 # weights exp(kappa (cos(2(t - mu)) - 1)), optionally times |g|^2.
-function est_meanshift(gx, gy, kappa::Float64; iters::Int=3, p::Int=0)
+function est_meanshift(gx, gy, kappa::Float64; iters::Int=3, p::Int=0, init::Symbol=:mean)
     s = 0.0; c = 0.0; n = 0
     @inbounds for k in eachindex(gx, gy)
         x = Float64(gx[k]); y = Float64(gy[k])
@@ -72,6 +72,20 @@ function est_meanshift(gx, gy, kappa::Float64; iters::Int=3, p::Int=0)
     r0 = hypot(s, c)
     r0 <= TINY && return WindowFitResult(rbar2=0.0, effective_n=n, failure_reason=:degenerate_resultant)
     mc = c / r0; ms = s / r0
+    if init === :hist
+        # Start from the peak of a coarse 18-bin (10 deg) histogram smoothed with
+        # [1, 2, 1], so the iteration starts on a mode rather than between two.
+        h = zeros(18)
+        @inbounds for k in eachindex(gx, gy)
+            x = Float64(gx[k]); y = Float64(gy[k])
+            _ok(x, y) || continue
+            t = mod(atan(y, x), pi)
+            h[min(18, floor(Int, t / pi * 18) + 1)] += 1
+        end
+        hs = [h[mod1(i - 1, 18)] + 2h[i] + h[mod1(i + 1, 18)] for i in 1:18]
+        t0 = (argmax(hs) - 0.5) * pi / 18
+        mc = cos(2t0); ms = sin(2t0)
+    end
     conf = 0.0
     for _ in 1:iters
         s2 = 0.0; c2 = 0.0; w = 0.0; wu = 0.0
