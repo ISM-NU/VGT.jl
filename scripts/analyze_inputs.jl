@@ -127,7 +127,7 @@ function analyze_file(filepath::String; label::String="")
     end
 
     if ndim < 3
-        println("\n  (2D image — skipping VGT analysis)")
+        println("\n  (2D image, skipping VGT analysis)")
         close(f)
         return
     end
@@ -453,7 +453,7 @@ end
 function default_files()
     return [
         (datadir("exp_raw", "Tb_combined_mw_full_hnv_res1_3pperb_reprojected_on_gass.fits"),
-        "CO cube — primary VGT input"),
+        "CO cube, primary VGT input"),
     ]
 end
 
