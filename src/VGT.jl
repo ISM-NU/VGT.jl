@@ -31,20 +31,20 @@ include("pipeline/run.jl")
 include("pipeline/outputs.jl")
 
 export VGTConfig, VGTDiagnostics
-export load_config, validate_static_config, resolve_execution_config, chunk_padding_pixels
+export load_config, resolve_execution_config, chunk_padding_pixels
 export read_cube_metadata, getcoor
 export WindowFitResult, fit_window_result
-export fit_axial_vonmises, fit_window_angle
+export fit_axial_vonmises
 export robust_negative_noise, estimate_channel_noise, estimate_spatial_noise
-export NoiseModel, separable_noise_cube, build_noise_model
+export build_noise_model
 export measure_gradient_noise, gradient_anisotropy, gradient_noise_cov_map
 export read_gradient_noise_cov_map, write_gradient_noise_cov_map
 export noise_for_chunk, build_noise_cube
 export velocity_axis_kms, selected_channels
 export VGT_QU_mv_2d, VGT_QU_mv_2d_profiled
-export process_chunk, chunk_y_bounds, save_chunk_atomic
+export process_chunk
 export NEGATIVE_MAD_NORMAL
-export choose_auto_threads, choose_auto_chunks, choose_auto_execution
+export choose_auto_chunks, choose_auto_execution
 export estimate_peak_chunk_bytes
 
 export PipelineRun
@@ -59,7 +59,7 @@ export project_config_path, rawdatadir, processeddatadir, simulationdir
 export run_parameters, run_parameter_hash, run_savename, default_output_dir, experiment_default_dir
 export parameterized_output_dir, experiment_output_dir, experiment_summary_dir, experiment_summary_path
 export collect_experiment_summaries, resolved_output_dir
-export run_metadata, write_run_metadata, write_pipeline_outputs, stitch_chunk_outputs
+export run_metadata, write_pipeline_outputs, stitch_chunk_outputs
 export cleanup_interrupted_run!
 export is_interrupt_exception, run_pipeline
 

@@ -112,20 +112,6 @@ function estimate_spatial_noise(path::AbstractString; fallback::Real,
     end
 end
 
-function separable_noise_cube(spatial::AbstractMatrix, channel::AbstractVector, scalar::Real)
-    # Combine spatial and channel noise estimates while preserving the scalar
-    # scale. This approximates noise(x,y,v) as spatial(x,y)*channel(v)/scalar.
-    scalar > 0 || throw(ArgumentError("scalar noise must be > 0"))
-    nx, ny = size(spatial)
-    nv = length(channel)
-    out = Array{Float64}(undef, nx, ny, nv)
-    inv_scalar = 1.0 / Float64(scalar)
-    @inbounds for k in 1:nv, j in 1:ny, i in 1:nx
-        out[i, j, k] = spatial[i, j] * channel[k] * inv_scalar
-    end
-    return out
-end
-
 function _select_auto_noise_mode(channel::AbstractVector, spatial::AbstractMatrix,
                                spread_threshold_pct::Real)
     # Auto mode chooses the simplest noise model that shows meaningful variation.
