@@ -1,4 +1,5 @@
 using VGT
+using VGT: run_parameters, vgt_product_header
 using FITSIO
 using Test
 

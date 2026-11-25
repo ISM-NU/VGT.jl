@@ -1,4 +1,5 @@
 using VGT
+using VGT: bin_header, bin_products, block_mean, run_parameters
 using FITSIO
 using Test
 using WCS: pix_to_world

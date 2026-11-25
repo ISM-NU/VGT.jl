@@ -1,4 +1,5 @@
 using VGT
+using VGT: read_gradient_noise_cov_map, resolve_execution_config
 using Test
 using FITSIO
 using Random
