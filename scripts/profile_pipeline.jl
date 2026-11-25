@@ -228,7 +228,6 @@ function build_report(io, metadata, timings, vgt_profile)
     println(io, "-"^72)
     format_seconds(io, "gradient_mean", grad.mean_s)
     format_seconds(io, "window_mean", window.mean_s)
-    format_seconds(io, "accumulation_mean", accum.mean_s)
     format_seconds(io, "window_median", window.median_s)
     format_seconds(io, "window_max", window.max_s)
 end

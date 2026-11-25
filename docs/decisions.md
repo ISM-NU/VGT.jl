@@ -55,3 +55,18 @@ Effect on results.
 
 Tests: `test/vgt_edge_cases.jl`, testsets "psi_reliability stays in [0, 1]"
 and "negative centre intensity gives zero Stokes weight".
+
+Two follow-up fixes in the same change.
+
+- Zero-Stokes masking. Under `:nan_before_smoothing`, Q and U were each set to
+  NaN where that map alone was exactly zero. A fitted angle of exactly 0 or
+  90 deg gives U == 0 or Q == 0, so a perfectly axis-aligned field had an
+  all-NaN psi (a pure x-ramp: 289 fitted pixels, 0 finite psi). Now a pixel is
+  masked only when Q and U are both zero, which is what a missing fit looks
+  like. On noisy data a single exact zero essentially never occurs, so psi is
+  unchanged there; the existing parity tests pass unchanged.
+- `psi_support` counts only fits that contributed weight to Q/U. A fit whose
+  weight was clamped to zero (negative centre pixel) no longer counts.
+
+Tests: "axis-aligned field keeps psi (U == 0 is not a missing fit)" and the
+updated "negative centre intensity gives zero Stokes weight".

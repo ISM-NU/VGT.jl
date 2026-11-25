@@ -483,7 +483,10 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
 
                     if collect_profile
                         fit_successes_tls[tid] += 1
-                        fit_success_count[ii, jj] += 1
+                        # psi_support counts channels that contributed to Q/U;
+                        # a fit with zero weight (clamped negative centre
+                        # pixel) adds nothing, so it does not count.
+                        stokes_weight > 0 && (fit_success_count[ii, jj] += 1)
                     end
                 elseif collect_profile
                     fit_failures_tls[tid] += 1
