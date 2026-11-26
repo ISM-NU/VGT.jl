@@ -6,6 +6,7 @@ using JLD2
 using Printf
 using Statistics
 using VGT
+using VGT: parameterized_output_dir, experiment_summary_path, collect_experiment_summaries
 
 Base.@kwdef struct MinValidSpec
     kind::Symbol

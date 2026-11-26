@@ -60,7 +60,7 @@ const SKY_ANGLE_FIXTURES = [
         psi = fill(NaN, 101, 101)
         psi[x, y] = psi_pix
         out = pixel_to_position_angle(psi, SKY_TEST_HEADERS[grid]; frame=frame)
-        @test abs(headless_angle_difference(out[x, y], chi)) < 1e-4
+        @test abs(VGT.headless_angle_difference(out[x, y], chi)) < 1e-4
         @test count(isfinite, out) == 1
     end
 end
