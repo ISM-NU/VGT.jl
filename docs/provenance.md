@@ -33,7 +33,8 @@ LMC sightline. It does not contain code from the Lazarian group.
   private repository for parity checks only.
 - Function names that the prototype also used (for example `getcoor`,
   `imfilter_gaussian`) are kept so that older analysis scripts keep
-  working; their implementations are new.
+  working through `VGT.getcoor` or `using VGT: getcoor`; their
+  implementations are new.
 
 ## What differs from the prototype
 

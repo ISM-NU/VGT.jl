@@ -5,6 +5,7 @@ using FITSIO
 using Printf
 using TOML
 using VGT
+using VGT: rawdatadir
 
 function default_options()
     return Dict(
