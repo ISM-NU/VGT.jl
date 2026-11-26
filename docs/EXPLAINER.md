@@ -1,4 +1,4 @@
-# How This Code Works — A Beginner's Guide
+# How This Code Works: A Beginner's Guide
 
 This document explains what `main.jl` does, step by step, in plain language.
 No prior knowledge of programming or astrophysics is assumed.
@@ -7,14 +7,14 @@ No prior knowledge of programming or astrophysics is assumed.
 
 ## What Is the Goal?
 
-The code analyzes a radio observation of a molecular cloud — a giant cloud of gas
+The code analyzes a radio observation of a molecular cloud, a giant cloud of gas
 in space, mostly made of carbon monoxide (CO). The observation is stored as a 3D
 data file (a FITS "data cube").
 
 The goal is to figure out **which direction the magnetic field is pointing** across
 the face of that cloud, and save the result as a 2D map.
 
-The technique used is called **VGT — Velocity Gradient Technique**. It is based on
+The technique used is called **VGT (Velocity Gradient Technique)**. It is based on
 the idea that turbulence in a magnetized gas tends to produce velocity variations
 that are mostly *perpendicular* to the local magnetic field. By measuring how the
 gas velocity changes from pixel to pixel, you can infer the field's orientation.
@@ -30,14 +30,14 @@ sky position.
 The input file (`CO_data_reproject.fits`) is a **3D array** of numbers:
 
 ```
-Axis 1 (x): sky position — left/right (Right Ascension)
-Axis 2 (y): sky position — up/down (Declination)
-Axis 3 (v): velocity — how fast the gas is moving toward or away from us
+Axis 1 (x): sky position, left/right (Right Ascension)
+Axis 2 (y): sky position, up/down (Declination)
+Axis 3 (v): velocity, how fast the gas is moving toward or away from us
 ```
 
 Each "slice" along the velocity axis is called a **channel map**. Each pixel in a
 channel map tells you how much CO gas is moving at that particular velocity at that
-sky location. This is how radio telescopes observe gas — not just where it is, but
+sky location. This is how radio telescopes observe gas: not just where it is, but
 at what velocity, which traces the motion and structure of the cloud.
 
 ---
@@ -51,14 +51,14 @@ lines than across them. This creates velocity gradients (changes in velocity fro
 one point to the next) that are statistically stronger *perpendicular* to the
 magnetic field.
 
-So if you measure the direction in which velocity changes the fastest — the
-gradient direction — you get a direction that is **90° rotated from the magnetic
+So if you measure the direction in which velocity changes the fastest (the
+gradient direction), you get a direction that is **90° rotated from the magnetic
 field**. The code perfonoise this rotation at the end (the `+ π/2` in the `psi`
 formula).
 
 ### Stokes Q and U
 
-The magnetic field orientation is a *headless* direction — a field pointing left
+The magnetic field orientation is a *headless* direction: a field pointing left
 is the same as one pointing right. Angles like this cannot be averaged directly
 because, for example, the average of 1° and 179° should be 90°, not 90°, but naive
 arithmetic gives 90° for the wrong reasons and breaks down near 0°/180°.
@@ -164,12 +164,12 @@ nx, ny, nv = dims[1], dims[2], dims[3]
 header = read_header(f[1])
 ```
 
-The FITS file has two parts: the **header** (metadata — telescope name, sky
-coordinates, units, etc.) and the **data** (the actual numbers). Here we only read
+The FITS file has two parts: the **header** (metadata such as telescope name, sky
+coordinates and units) and the **data** (the actual numbers). Here we only read
 the header to learn the dimensions of the cube: `nx` pixels wide, `ny` pixels tall,
 `nv` velocity channels deep.
 
-We do not load the actual data yet — it is too large to fit in RAM all at once.
+We do not load the actual data yet. It is too large to fit in RAM all at once.
 
 ---
 
@@ -187,7 +187,7 @@ Each chunk number `j` (from 1 to `ny_chunks`) is processed in order. Inside
 #### Inside `process_chunk`:
 
 1. **Open the file and read only one strip**
-   The pipeline reads just the rows for the current strip — plus a small overlap
+   The pipeline reads just the rows for the current strip, plus a small overlap
    ("padding") on each side. The overlap is needed because the gradient
    calculation at the edge of a strip needs to see a few pixels from the
    neighboring strip.
@@ -265,7 +265,7 @@ neighbors, where nearby neighbors count more than distant ones (a bell-curve
 weight). This reduces pixel-level noise. The radius of the smoothing is `ker = 4`
 pixels.
 
-**Masking**: pixels where the total intensity is zero have no signal — they are
+**Masking**: pixels where the total intensity is zero have no signal: they are
 outside the cloud or purely noise. Those pixels are set to `NaN` ("Not a Number"),
 which causes them to appear as blank/transparent in plots and be ignored in further
 calculations.
@@ -283,7 +283,7 @@ This is the key formula:
 1. `atan(U, Q)` recovers the doubled angle `2θ` from the Stokes parameters.
 2. Dividing by 2 (`0.5 ×`) gives back the gradient angle `θ`.
 3. Adding `π/2` (90°) rotates from the gradient direction to the magnetic field
-   direction — because the field runs *perpendicular* to the gradient.
+   direction, because the field runs *perpendicular* to the gradient.
 
 The result `psi` is a 2D array where each pixel holds the inferred magnetic field
 angle (in radians) at that sky position.
@@ -303,7 +303,7 @@ write_pipeline_outputs(run)
 
 The `psi` map, reliability map, and fitter diagnostics are written as FITS
 files. The WCS (World Coordinate System) header from the original data cube is
-copied in so that the output images know where they are on the sky — this lets
+copied in so that the output images know where they are on the sky. This lets
 you overlay them on the original data in astronomy visualization tools like DS9.
 
 ---

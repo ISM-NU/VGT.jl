@@ -250,16 +250,11 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
     # This is the science kernel. It returns Q/U maps accumulated over channels.
     # The final magnetic-field angle is computed later from these maps.
     nx, ny, nv = size(cube)
-    iseven(dn) || throw(ArgumentError("dn must be even; got $dn"))
-    min_valid >= 1 || throw(ArgumentError("min_valid must be >= 1"))
-    min_valid <= dn * dn ||
-        throw(ArgumentError("min_valid=$min_valid exceeds the maximum window area dn^2=$(dn * dn)"))
+    _check_kernel_settings(dn, min_valid, rbar2_gate)
     dn <= nx || throw(ArgumentError("dn=$dn is too large for nx=$nx (need nx ≥ $dn)"))
     dn <= ny || throw(ArgumentError("dn=$dn is too large for ny=$ny (need ny ≥ $dn)"))
     gradient_mode in GRADIENT_MODES ||
         throw(ArgumentError("Unsupported gradient_mode=$gradient_mode"))
-    0.0 <= rbar2_gate <= 1.0 ||
-        throw(ArgumentError("rbar2_gate must be in [0, 1], got $rbar2_gate"))
     _validate_gradient_whiten(gradient_whiten, gradient_noise_cov,
                               gradient_noise_cov_map === nothing ? "" : "<map>", gradient_mode)
     gradient_noise_cov_map === nothing || size(gradient_noise_cov_map) == (nx, ny, 3) ||
@@ -330,17 +325,16 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
         channel_image = @view cube[:, :, channel]
         mask_image = weight_cube === nothing ? channel_image : @view weight_cube[:, :, channel]
 
-        # Compute backward spatial differences within one velocity channel.
-        # The production mode marks the first row/column invalid instead of
-        # wrapping around the image edge, which avoids inventing a gradient
-        # between unrelated sky pixels.
+        # Gradient of one velocity channel with the stencil of gradient_mode. A
+        # pixel is NaN where its stencil reaches the image edge or a sample below
+        # the noise threshold, so no gradient is invented from unrelated sky
+        # pixels. :nan_edge_backward (comparison only) takes backward differences
+        # and masks only the centre pixel.
         t_grad = collect_profile ? time_ns() : Int64(0)
         @inbounds for j in 1:ny, i in 1:nx
             if gradient_mode === :nan_edge_backward
                 grad_x[i, j] = i == 1 ? NaN : channel_image[i - 1, j] - channel_image[i, j]
                 grad_y[i, j] = j == 1 ? NaN : channel_image[i, j - 1] - channel_image[i, j]
-                # The backward compatibility path only masks the center pixel,
-                # preserving the historical production semantics.
                 threshold = scalar_noise ? noise : noise[i, j, channel]
                 if mask_image[i, j] < threshold
                     grad_x[i, j] = NaN
@@ -536,54 +530,19 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
     return q_accum, u_accum, profile
 end
 
-function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
-                      min_valid::Int=100, fitter_mode::Symbol=:axial_vonmises,
-                      rbar2_weight::Bool=false,
-                      rbar2_gate::Float64=0.0,
-                      gradient_mode::Symbol=:central_checked,
-                      gradient_whiten::Bool=false,
-                      gradient_noise_cov::AbstractVector{<:Real}=Float64[],
-                      gradient_noise_cov_map=nothing,
-                      weight_cube=nothing,
-                      edge_mask::Bool=false)
-    # Public non-profiling VGT entry point used by tests and analysis scripts.
-    q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
-                                                fitter_mode=fitter_mode, collect_profile=false,
-                                                rbar2_weight=rbar2_weight,
-                                                rbar2_gate=rbar2_gate,
-                                                gradient_mode=gradient_mode,
-                                                gradient_whiten=gradient_whiten,
-                                                gradient_noise_cov=gradient_noise_cov,
-                                                gradient_noise_cov_map=gradient_noise_cov_map,
-                                                weight_cube=weight_cube,
-                                                edge_mask=edge_mask)
+# The two public entry points take the kernel's keywords unchanged.
+function VGT_QU_mv_2d(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise; kwargs...)
+    q_accum, u_accum, _ = _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise;
+                                                kwargs..., collect_profile=false)
     return q_accum, u_accum
 end
 
-function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise;
-                               min_valid::Int=100, fitter_mode::Symbol=:axial_vonmises,
-                               rbar2_weight::Bool=false,
-                               rbar2_gate::Float64=0.0,
-                               gradient_mode::Symbol=:central_checked,
-                               gradient_whiten::Bool=false,
-                               gradient_noise_cov::AbstractVector{<:Real}=Float64[],
-                               gradient_noise_cov_map=nothing,
-                               weight_cube=nothing,
-                               edge_mask::Bool=false)
-    # Same VGT computation as VGT_QU_mv_2d, but also returns diagnostic maps and
-    # counters that help evaluate fit quality across the sky, and
-    # profile[:fitted_weight], the reliability denominator for
-    # finalize_vgt_products.
-    return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise; min_valid=min_valid,
-                                 fitter_mode=fitter_mode, collect_profile=true,
-                                 rbar2_weight=rbar2_weight,
-                                 rbar2_gate=rbar2_gate,
-                                 gradient_mode=gradient_mode,
-                                 gradient_whiten=gradient_whiten,
-                                 gradient_noise_cov=gradient_noise_cov,
-                                                gradient_noise_cov_map=gradient_noise_cov_map,
-                                 weight_cube=weight_cube,
-                                 edge_mask=edge_mask)
+# Same computation as VGT_QU_mv_2d, plus diagnostic maps and counters for fit
+# quality across the sky, and profile[:fitted_weight], the reliability
+# denominator for finalize_vgt_products.
+function VGT_QU_mv_2d_profiled(cube::AbstractArray{<:Any, 3}, dn, first_channel, last_channel, noise; kwargs...)
+    return _vgt_qu_mv_exact_impl(cube, dn, first_channel, last_channel, noise;
+                                 kwargs..., collect_profile=true)
 end
 
 function chunk_y_bounds(j::Int, ny::Int, ny_chunks::Int)

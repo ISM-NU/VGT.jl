@@ -1,4 +1,5 @@
 using VGT
+using VGT: run_parameters, selected_channels
 using FITSIO
 using Random
 using Test

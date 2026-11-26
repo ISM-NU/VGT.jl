@@ -1,4 +1,5 @@
 using VGT
+using VGT: chunk_padding_pixels
 using FITSIO
 using Random
 using Test

@@ -144,8 +144,3 @@ function fit_window_result(mode::Symbol, grad_x::AbstractArray, grad_y::Abstract
     reason = stats.resultant <= sqrt(eps(Float64)) ? :degenerate_resultant : :fit_failed
     return _fit_result(stats.angle, stats; failure_reason=reason)
 end
-
-function fit_window_angle(mode::Symbol, grad_x::AbstractArray, grad_y::AbstractArray)
-    result = fit_window_result(mode, grad_x, grad_y)
-    return result.angle, NaN
-end
