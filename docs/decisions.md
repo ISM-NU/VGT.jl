@@ -4,6 +4,30 @@ Status: active reference. Dated decisions that change the meaning of a
 production output. Newest first. Each entry says what changed, why, and what
 it does to results made before it.
 
+## 2026-11-27: a NaN voxel removes only its own channel
+
+Decided by Denis Andreyev. Code: `src/science/vgt.jl` (kernel),
+`src/science/products.jl` (`compute_stokes_intensity`). Test:
+`test/nan_centre.jl`.
+
+Old behaviour. A window fit centred on a non-finite voxel got the Stokes weight
+`max(NaN, 0) = NaN`, so Q/U/W became NaN for the whole pixel, and the
+channel-summed sky intensity was NaN there as well. One NaN channel removed the
+pixel from psi and reliability, even though the other channels had valid fits,
+so a per-channel NaN flag acted as a pixel mask.
+
+New behaviour. The kernel skips the fit of a channel whose window centre is
+non-finite, and the sky intensity sums the finite voxels where the plain sum is
+non-finite. Pixels blank in every channel sum to 0 and stay masked as before;
+pixels without a non-finite voxel keep the plain sum bit for bit. A NaN voxel
+now gives the same Q/U/W, psi and reliability as a voxel set below the noise
+threshold (weight 0); the test checks this.
+
+Effect on results. Output is bitwise identical wherever each pixel is finite in
+all channels of the run or non-finite in all of them (blank sky as NaN or as 0).
+Only inputs with NaN in some channels of a pixel change: those pixels now get a
+direction from their other channels.
+
 ## 2026-11-25: `psi_reliability` is normalised by the fitted Stokes weight
 
 Decided by Denis Andreyev. Code: `src/science/vgt.jl` (kernel),
