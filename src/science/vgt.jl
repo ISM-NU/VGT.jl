@@ -432,6 +432,11 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 end
             end
             valid >= min_valid || continue
+            # A window whose centre voxel is non-finite in this channel has no
+            # Stokes weight; skip the channel here. Letting it through made Q/U
+            # NaN for the whole pixel (max(NaN, 0) is NaN), so one NaN channel
+            # erased the fits of every other channel at that pixel.
+            isfinite(mask_image[ii, jj]) || continue
 
             if collect_profile
                 valid_windows_tls[tid] += 1
@@ -454,8 +459,8 @@ function _vgt_qu_mv_exact_impl(cube::AbstractArray{<:Any, 3}, dn, first_channel,
                 end
                 # Clamped at zero: a negative centre pixel (noise around zero
                 # intensity) would otherwise enter Q/U with a negative weight,
-                # i.e. vote for the orientation rotated by 90 degrees. NaN still
-                # propagates (max(NaN, 0.0) is NaN) and is masked downstream.
+                # i.e. vote for the orientation rotated by 90 degrees. The centre
+                # is finite here (checked above).
                 intensity_weight = max(Float64(mask_image[ii, jj]), 0.0)
                 if collect_profile
                     _accumulate_weighted_diagnostic!(fit_rbar2_num, fit_rbar2_w, ii, jj, result.rbar2, intensity_weight)
@@ -660,7 +665,7 @@ function process_chunk(j::Int, cfg::VGTConfig, ny::Int, nv::Int; noise_model=not
         u_accum = u_padded[:, trim_y_start:trim_y_end]
         w_accum = profile[:fitted_weight][:, trim_y_start:trim_y_end]
         intensity_cube = sub_weight === nothing ? sub_cube : sub_weight
-        @views intensity_accum = sum(intensity_cube[:, trim_y_start:trim_y_end, :]; dims=3)[:, :, 1]
+        @views intensity_accum = compute_stokes_intensity(intensity_cube[:, trim_y_start:trim_y_end, :])
         fit_maps_trimmed = (
             fit_rbar2=fit_maps.fit_rbar2[:, trim_y_start:trim_y_end],
             fit_attempt_fraction=fit_maps.fit_attempt_fraction[:, trim_y_start:trim_y_end],
