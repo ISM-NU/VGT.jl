@@ -13,7 +13,22 @@ end
 function compute_stokes_intensity(cube)
     # Collapse the velocity axis. finalize_vgt_products uses this sum only to
     # mask sky; the reliability denominator is the fitted Stokes weight.
-    return sum(cube; dims=3)[:, :, 1]
+    # Where the plain sum is non-finite (a NaN or Inf voxel), the sum is taken
+    # over the finite voxels only, so a pixel blank in some channels keeps its
+    # psi from the others; a pixel blank in every channel sums to 0 and stays
+    # masked, as before. Pixels without non-finite voxels keep the plain sum
+    # bit for bit (its summation order decides the sign of near-zero sums).
+    out = sum(cube; dims=3)[:, :, 1]
+    @inbounds for j in axes(out, 2), i in axes(out, 1)
+        isfinite(out[i, j]) && continue
+        acc = zero(eltype(out))
+        for k in axes(cube, 3)
+            v = cube[i, j, k]
+            isfinite(v) && (acc += v)
+        end
+        out[i, j] = acc
+    end
+    return out
 end
 
 function compute_reliability(q_smooth::AbstractMatrix, u_smooth::AbstractMatrix, weight_smooth::AbstractMatrix)
